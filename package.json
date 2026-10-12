@@ -1,0 +1,38 @@
+{
+  "name": "self-live",
+  "version": "0.1.0",
+  "description": "Compartilhamento de tela e áudio P2P para Windows",
+  "main": "src/main/main.js",
+  "author": "Self Live",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "test:p2p": "node scripts/run-p2p-smoke.js",
+    "test:room": "node scripts/run-room-smoke.js",
+    "test:ui": "node scripts/run-ui-smoke.js",
+    "test:pilot": "node scripts/run-pilot-smoke.js",
+    "test:audio": "npm run build:audio && node scripts/run-audio-smoke.js",
+    "test:relay": "node --test relay/test/relay.test.js test/relay-client.test.js test/relay-preload.test.js && node scripts/run-relay-smoke.js && node scripts/run-relay-smoke.js --forced",
+    "test:relay:public": "node scripts/run-relay-smoke.js --public && node scripts/run-relay-smoke.js --public --forced",
+    "test:fallback": "node scripts/run-relay-smoke.js --fallback",
+    "test:turn": "node scripts/run-turn-test.js",
+    "test:upnp": "node --test test/portmapper.test.js test/network.test.js test/access-link.test.js test/signaling-client.test.js test/media-ports.test.js test/connectivity.test.js test/shutdown.test.js && node scripts/run-upnp-check.js",
+    "check": "node scripts/check.js",
+    "dist": "electron-builder --win msi",
+    "dist:pilot": "electron-builder --win portable --x64",
+    "build:audio": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-audio.ps1",
+    "predist:pilot": "npm run build:audio",
+    "predist": "npm run build:audio"
+  },
+  "dependencies": {
+    "@achingbrain/nat-port-mapper": "^4.0.5",
+    "default-gateway": "^7.2.2",
+    "selfsigned": "^5.5.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.0.12"
+  }
+}

@@ -1,0 +1,16 @@
+appId: com.selflive.desktop
+productName: Self Live
+artifactName: Self-Live-${version}-${arch}.${ext}
+directories:
+  output: dist
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json
+extraResources:
+  - from: native/bin/app-audio.exe
+    to: audio/app-audio.exe
+win:
+  target: msi
+msi:
+  perMachine: false
