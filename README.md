@@ -524,13 +524,115 @@ não oferecer IPv6, utiliza IPv4. A presença de um endereço global detectado n
 garante acesso externo: rota e firewall ainda precisam permitir a conexão.
 Uma restrição explícita em `SELF_LIVE_WS_HOST` prevalece sobre os listeners padrão.
 
+## Resolução máxima
+
+O limite absoluto é **1920 × 1080**, inclusive em NATIVA, janelas e adaptive.
+As constraints incluem máximos desde `getDisplayMedia`; antes de entregar a
+captura ao encoder, o app aplica o tamanho proporcional e confere `getSettings()`.
+Se o Chromium não respeitar o limite, todas as tracks dessa captura são encerradas.
+`SELF_LIVE_MEDIA_WIDTH`/`SELF_LIVE_MEDIA_HEIGHT` não são overrides suportados.
+
+Fontes 4K são reduzidas para até FHD. Ultrawide/portrait preservam as proporções
+quando possível: 3440 × 1440 resulta em aproximadamente 1920 × 803, não em uma
+imagem esticada. O badge informa o tamanho efetivo. Fontes menores não são ampliadas.
+No diagnóstico, confira `captureMode.originalResolution`, `effectiveResolution`,
+`downscaled` e `reason: "fhd_cap"`. Quando o tamanho original de uma janela não
+estiver disponível, `originalResolution` fica `null`; não usamos a miniatura como
+medida da fonte.
+
+## Diagnóstico de contenção de GPU
+
+Um jogo sem limite de FPS pode consumir a engine 3D e atrasar captura/conversão,
+inclusive o trabalho de composição do DWM. CPU e encoder pouco ocupados não
+descartam esse problema. Uma correlação entre GPU alta e FPS da fonte baixo é
+evidência de contenção, mas não identifica sozinha qual etapa do compositor travou.
+O contador GPU é a engine mais ocupada do sistema, inclusive em PCs com várias
+GPUs (`gpuScope: "system_busiest_engine"`); não atribui todo o uso ao jogo capturado.
+
+Durante a transmissão, abra **CONTROLES DE CAPTURA (AVANÇADO)**. O adaptive vem
+ligado: avalia blocos de quatro amostras de 2 segundos, exigindo três observações
+consecutivas de GPU 3D ≥90% e duas de captura lenta. A leitura GPU ocorre a cada
+10 segundos e é reutilizada nas amostras, com idade registrada. Dados ausentes
+ou com mais de 15 segundos não acionam ajustes. Não são três medições GPU
+independentes em seis segundos. Sem viewer/FPS observado, preserva a qualidade.
+
+A escada oculta o preview, reduz FPS para 45/30/20 e depois reduz resolução para
+1280 × 720 e 960 × 540, pulando etapas que não mudam o tamanho real. NATIVA já
+limitada a FHD não precisa de um passo idêntico de 1920 × 1080. Cada ajuste tem
+intervalo mínimo de 10 segundos; a avaliação por blocos pode aumentar esse intervalo.
+Seis observações de GPU ≤60% e captura sem stall recuperam um passo por vez,
+até a configuração inicial. O piso dos ajustes é o perfil 960 × 540 @20 fps,
+respeitando fontes menores e proporções. Uma configuração inicial manual abaixo
+desse piso é preservada e não recebe degradações adicionais.
+
+Desligue **ADAPTIVE** para ocultar/reabrir o preview, escolher NATIVA/1080p/720p/
+540p/480p ou limitar a captura a 60/45/30/20/15 fps. O preview oculto é removido
+do DOM. Resolução/FPS usam a track atual; trocar tela/janela usa o seletor nativo
+existente e substitui as tracks dos senders, preservando as conexões. O som continua
+sujeito à política de isolamento por aplicativo. A qualidade escolhida no modal
+define a configuração inicial de cada sessão; preferências de preview e adaptive
+ficam em `config/local.json`, dentro dos dados deste usuário do app.
+
+Limitar o FPS **do jogo** (por exemplo, comparar CS ilimitado com 144) pode deixar
+margem na GPU. O controle de FPS da captura não limita o jogo. Reduzir resolução/
+FPS e ocultar preview reduz trabalho do Self Live, mas não garante eliminar stalls.
+Prioridade de CPU não reserva recursos gráficos, trocar encoder não corrige uma
+fonte que não entrega frames e captura por CPU não elimina a composição GPU.
+
+**FORÇAR CAPTURA POR CPU** informa um fallback explícito: a troca não é suportada
+a quente neste pipeline Chromium e o modo permanece GPU. Não usamos flags que
+desativem globalmente aceleração/encoder fingindo que são apenas captura CPU.
+Captura/encode nativos DXGI/WGC → NVENC/AMF exigiriam outra integração de mídia.
+Um hook na swapchain também exige implementação nativa e compatibilidade com
+anti-cheat; não é uma solução universal, especialmente para CS2.
+
+## Logs de diagnóstico
+
+Na página inicial, em **CONFIGURAÇÕES DE DIAGNÓSTICO**, use **ATIVAR LOGS DE
+DIAGNÓSTICO**. Padrão OFF; preferência persistida em `config/local.json` no
+diretório de dados do usuário, sem `localStorage`. Não exige reiniciar. Enquanto
+houver captura ativa, o toggle fica bloqueado: pare a transmissão para alterar.
+Na transmissão, **● LOGS ON** indica a preferência ativada.
+
+Com logs ON, grava `diagnostic-<timestamp>-<pid>-<parte>.jsonl` em
+**Documentos/SelfLive-Logs** (a pasta Documentos pode estar redirecionada pelo
+Windows/OneDrive). Cada parte tem até 10 MiB; conserva as cinco últimas partes
+geradas. **ABRIR PASTA DE LOGS** abre o diretório. Ao parar, escreve o encerramento.
+Sem permissão de gravação, avisa e mantém a transmissão; não muda silenciosamente
+o destino. Logs antigos ao lado do EXE não são apagados por essa rotação.
+
+Com logs OFF, não cria JSONL nem coleta CPU/memória dos processos. Conforme a
+configuração adotada, o adaptive ainda coleta métricas mínimas de captura/GPU
+sem gravar arquivos. Desligando também adaptive, essa coleta adicional é encerrada.
+Os indicadores de conexão existentes continuam independentes.
+
+`captureGap` é a razão FPS alvo / FPS observado, não milissegundos. `captureStall`
+marca FPS observado abaixo de 75% do alvo; não é prova de congelamento de conteúdo.
+`framesCaptured` usa o contador de `media-source` quando disponível. Contadores
+de frames descartados/travados não oferecidos pelo Chromium ficam `null`, sem
+estimativas inventadas. As taxas de envio e `encodeMs` continuam calculadas por
+diferença entre estatísticas. Nenhuma imagem, áudio, senha, IP, SDP/ICE ou identidade
+de peer entra no arquivo.
+
+**EXPORTAR DIAGNÓSTICO** aparece nos controles avançados e no diagnóstico geral,
+inclusive após parar. Gera `experiment-<timestamp>.json` com configuração,
+amostras e resumo. Conserva em memória as últimas 1000 amostras gravadas; sessões
+maiores marcam `samplesTruncated`, e o resumo agrega todas as amostras gravadas
+da sessão. Exportar sem logs retorna um relatório sem amostras. JSONs exportados
+não entram na rotação dos JSONL.
+
+```powershell
+npm run test:adaptive
+npm run test:logging-toggle
+npm run test:resolution-cap
+npm run test:ui
+```
+
 ## Verificação automatizada
 
-Cada transmissão gera automaticamente um log de auditoria ao lado do EXE portátil,
-com fps/bitrate reais, tempo de codificação, limitações e carga dos motores da GPU.
-Não inclui senha, IPs, SDP/ICE ou conteúdo. Limite: 5 MiB por sessão e 10 arquivos.
-Veja [como auditar o CS sob carga](docs/stream-audit.md) e envie os arquivos após
-parar a transmissão. A coleta não altera a qualidade configurada.
+Logs são opcionais e começam desativados. Ative-os na página inicial antes de
+transmitir. Veja [como auditar o CS sob carga](docs/stream-audit.md). O adaptive
+pode alterar a qualidade; desligue-o para comparar experimentos manuais.
 
 ```powershell
 npm run check

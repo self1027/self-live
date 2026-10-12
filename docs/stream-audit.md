@@ -1,68 +1,65 @@
 # Auditoria de transmissão sob carga
 
-Ao começar a compartilhar, o app cria automaticamente um arquivo
-`self-live-audit-DATA-PID.jsonl` **na pasta do EXE portátil**. Nenhuma configuração
-é necessária. Pare a transmissão antes de enviar o arquivo; assim ele terá o
-registro de encerramento. O diagnóstico avançado informa o nome do arquivo.
+Na página inicial, abra **CONFIGURAÇÕES DE DIAGNÓSTICO** e ative **ATIVAR LOGS DE
+DIAGNÓSTICO** antes de transmitir. O padrão é OFF e a preferência fica em
+`config/local.json`, dentro dos dados do usuário do app. Não exige reinício.
+O toggle só existe na página inicial e fica bloqueado durante captura ativa.
 
-Se a pasta não permitir escrita, o arquivo fica em `audit` dentro dos dados do
-app (`%APPDATA%\self-live`, conforme o perfil da instalação). O diagnóstico avisa
-quando isso acontecer. Em desenvolvimento, os logs ficam na raiz do projeto.
-Falha no diagnóstico não interrompe a transmissão. Nada é enviado automaticamente.
+Os arquivos são gravados em **Documentos/SelfLive-Logs**, com nome
+`diagnostic-DATA-PID-PARTE.jsonl`. Use **ABRIR PASTA DE LOGS**. Cada parte tem até
+10 MiB, conservando as cinco últimas partes geradas. Pare antes de enviar para
+incluir o registro de encerramento. Não há mais criação automática ao lado do EXE.
+Se a pasta não puder ser gravada, o app avisa e mantém a transmissão.
 
-## O que coletamos
+## Experimento comparável
 
-- Versões do app, Electron/Chromium e Windows; arquitetura, número de threads e RAM.
-- Identificadores PCI não exclusivos dos adaptadores e versão do driver, quando disponível.
-- Configuração de captura, teto de bitrate e política de adaptação usados nesta build.
-- A cada 2 segundos: fps da fonte quando exposto pelo WebRTC, fps codificado/enviado,
-  resolução do envio, bitrate efetivo, tempo médio de encoding, motivo e duração
-  das limitações, RTT/perda/jitter reportados e número de viewers.
-- Uso de CPU e memória dos processos do Self Live; estado da prévia e do teste local.
-- A cada 10 segundos: carga dos motores 3D, cópia, compute e vídeo disponíveis
-  nos contadores Windows. Os valores representam o motor mais ocupado entre os
-  adaptadores, somando seus processos; não identificam qual jogo ou GPU o produziu.
-  A duração da consulta também é registrada. Se a consulta falhar, ela é desativada
-  até a próxima transmissão, sem afetar vídeo ou áudio.
+1. Ative logs na página inicial. Entre na sala e compartilhe a mesma fonte com
+   a mesma resolução, FPS e bitrate, sempre limitados a 1920 × 1080.
+2. Nos controles avançados da transmissão, desligue **ADAPTIVE** para o teste
+   manual não mudar a qualidade. Conecte um viewer, jogue com FPS ilimitado por
+   30–60 segundos, pare e exporte o diagnóstico pelo diagnóstico geral.
+3. Repita alterando somente o cap de FPS do jogo para 144. Esse cap é configurado
+   no jogo; o FPS de captura é outra configuração.
+4. Compare separadamente preview visível/oculto, 60/45/30/20/15 fps de captura e
+   FHD/720p/540p/480p. Desligue adaptive para liberar esses controles.
+5. Faça uma sessão com adaptive ON, jogo ilimitado e viewer conectado. Observe
+   notificações de ajustes; depois alivie a GPU e aguarde recuperação.
+6. Envie os JSONL e os JSONs exportados, junto de GPU, monitor, configurações do
+   jogo e descrição do problema: engasgo, atraso ou borramento.
 
-Os viewers recebem números locais à sessão (1, 2…), sem nome ou `node_id`.
-Não coletamos senha, hash, convite, endereço IP, candidatos ICE, SDP, nome da
-sala/janela/processo do jogo, imagens, áudio ou conteúdo transmitido.
+Não precisa executar como administrador. O experimento CPU não é suportado a
+quente pelo pipeline atual: ao tentar ativá-lo, o app informa GPU mantida. Não
+desativa globalmente a aceleração nem troca o encoder.
 
-Cada arquivo tem limite aproximado de **5 MiB**. Ao atingir o limite, registra
-`size_limit` e para de acrescentar amostras, mantendo o encerramento. O app conserva
-os **10 arquivos mais recentes** em cada pasta e remove somente seus próprios
-arquivos de auditoria com o padrão de nome gerado. Outros arquivos permanecem.
+## Interpretação
 
-## Teste com CS
+`capture.frameRate` e `captureMode.frameRate` descrevem a configuração, não a
+cadência observada. Use `observedFps`/`media-source.framesPerSecond`, `encodedFps`
+e `sentFps`. Taxas calculadas e `encodeMs` exigem duas leituras consecutivas.
 
-1. Use a nova build em uma pasta com permissão de escrita. Inicie CS e conecte
-   **um viewer**, mantendo o teste de mídia local desligado.
-2. Compartilhe uma cena com movimento por 2–3 minutos nas configurações que
-   apresentam o problema. Anote o horário aproximado da piora. Pare a transmissão
-   e guarde o primeiro arquivo.
-3. Repita a mesma cena, resolução, fps e bitrate, alterando somente o limite de
-   fps do jogo para deixar margem na GPU. Pare e guarde o segundo arquivo.
-4. Envie os dois arquivos e informe resolução do monitor, configurações usadas
-   e se o defeito era travamento, atraso ou imagem borrada.
+`captureGap` = FPS alvo / FPS observado. `captureStall` indica FPS observado
+abaixo de 75% do alvo; conteúdo estático também pode gerar FPS baixo. Contadores
+não disponibilizados pelo Chromium ficam `null`. O arquivo não inventa números
+de frames descartados ou congelados.
 
-Não precisa executar como administrador. Evite modificar várias opções entre
-testes, pois isso dificulta identificar a causa.
+`busiestEnginePercent` e `engineSaturation` mostram a engine mais ocupada do
+sistema, não exclusivamente o jogo nem obrigatoriamente a GPU da captura.
+`gpuScope`, `gpuTime` e `gpuAgeMs` tornam essa limitação explícita. A GPU é lida
+a cada 10 segundos; as amostras de captura usam esse último valor por até 15
+segundos. Falhas de leitura geram indisponível e são tentadas novamente.
 
-## Como interpretar
+GPU 3D alta com captura lenta é compatível com contenção gráfica. Não identifica
+por si só uma espera do DWM. `limitation: cpu` é uma classificação WebRTC e não
+uma medição de CPU. `hardwareEfficient`/categoria de encoder são opcionais e
+não comprovam um SDK específico. Não se registra conteúdo, senha, IP ou SDP/ICE.
 
-`capture.frameRate` é a configuração reportada pela track, não uma medição da
-cadência real. Use `media-source.framesPerSecond`, `encodedFps` e `sentFps` quando
-disponíveis. A primeira amostra não contém taxas calculadas: elas exigem duas
-leituras. `encodeMs` usa diferenças de tempo total e frames entre amostras.
+O adaptive avalia quatro amostras de dois segundos, com no mínimo dez segundos
+entre ajustes, e exige GPU alta junto com captura lenta. A recuperação exige
+seis observações de GPU ≤60% e captura sem stall. Sem GPU válida ou FPS observado,
+preserva a qualidade. Com logs OFF, adaptive ON ainda mede o mínimo necessário;
+OFF em ambos encerra essa coleta adicional.
 
-`limitation: cpu` indica limitação de processamento reportada pelo WebRTC; não é
-uma medida direta da CPU nem prova que a GPU é a causa. Os contadores de GPU,
-fps da fonte, tempo de encoding e teste comparativo ajudam a separar as hipóteses.
-`hardwareEfficient` é opcional e a categoria `hardware-or-external` não garante
-aceleração por hardware. Campos ausentes significam informação indisponível.
-
-O arquivo do streamer registra o feedback RTP disponível do viewer, mas não
-mede diretamente sua GPU, fps de apresentação ou congelamentos do player remoto.
-Esses dados exigiriam auditoria também no viewer. A coleta de contadores tem custo
-pequeno, porém não nulo; sua duração fica registrada para avaliar interferência.
+O export inclui as últimas 1000 amostras gravadas da sessão, configuração e
+resumo agregado da sessão toda. `samplesTruncated` indica truncamento em sessões
+mais longas. Arquivos exportados não são removidos pela rotação JSONL. O streamer
+não mede a latência completa até a tela do viewer.
