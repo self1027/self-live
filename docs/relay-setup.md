@@ -1,5 +1,14 @@
 # Sinalização via relay
 
+[← Self Live](../README.md) · [Documentação](README.md)
+
+## Relay usado pelo app
+
+O padrão do cliente é **`wss://relay.murilod.dev:8443`**, com certificado público.
+Não é necessário configurar fingerprint para esse endpoint. A implantação atual
+usa renovação DNS-01 via Cloudflare; o procedimento de provisionamento abaixo
+descreve também alternativas para um relay próprio e certificados self-signed.
+
 O WSS local continua ativo. O host registra simultaneamente um transporte adicional na VPS; viewers tentam os endpoints do convite por prioridade, com 5 segundos para conexão **e handshake** em cada endereço. IPv6 e IPv4 direto vêm antes do relay, que vem antes da LAN. Uma rejeição de sala/senha encerra a entrada. O relay não participa do transporte de mídia: WebRTC continua P2P, com TURN como fallback independente.
 
 ## Provisionar na VPS
@@ -35,14 +44,13 @@ Copie somente o valor hexadecimal, com ou sem `:`. Transmita esse pin por um can
 No PowerShell, antes de iniciar o host:
 
 ```powershell
-$env:SELF_LIVE_RELAY_URL = 'wss://72.61.63.75:8443'
-$env:SELF_LIVE_RELAY_FINGERPRINT = 'AA:BB:...:FF' # substitua pelo fingerprint completo
+$env:SELF_LIVE_RELAY_URL = 'wss://relay.murilod.dev:8443'
 # Opcional: namespace do relay, sem mudar o nome da sala local
 $env:SELF_LIVE_RELAY_ROOM = 'sala-x'
 npm start
 ```
 
-`SELF_LIVE_RELAY_URL` ausente usa `wss://72.61.63.75:8443`; valor vazio desativa o relay. `SELF_LIVE_RELAY_ROOM` ausente usa o nome da sala local. Self-signed exige `SELF_LIVE_RELAY_FINGERPRINT`. Sem pin, o cliente exige um certificado público válido para a URL, sem desativar a verificação TLS. Pin configurado é comparado antes de transmitir o registro. Relay sem resposta gera aviso e reconecta em 1, 2, 4, 8, 16 e 30 segundos, com teto de 30 segundos; o WSS local continua funcionando.
+`SELF_LIVE_RELAY_URL` ausente usa `wss://relay.murilod.dev:8443`; valor vazio desativa o relay. `SELF_LIVE_RELAY_ROOM` ausente usa o nome da sala local. Para um relay próprio self-signed, configure também `SELF_LIVE_RELAY_FINGERPRINT` com o SHA-256 completo. Sem pin, o cliente exige um certificado público válido para a URL, sem desativar a verificação TLS. Pin configurado é comparado antes de transmitir o registro. Relay sem resposta gera aviso e reconecta em 1, 2, 4, 8, 16 e 30 segundos, com teto de 30 segundos; o WSS local continua funcionando. Remova pins antigos de outra URL antes de usar o relay público.
 
 Gere o convite no dashboard. O formato `self-live://join?data=...` permanece: o endpoint adicional contém URL, prioridade 3, token da sala, identidade de transporte do host e pin próprio (se configurado). Viewers importam o convite e informam a mesma senha; não precisam copiar a configuração do host para o ambiente. O pin do relay é independente do pin do WSS local. Convites antigos continuam aceitos. O link não contém senha nem chave de cifragem.
 
@@ -57,12 +65,12 @@ O host usa uma identidade de transporte adicional; sockets virtuais injetam as m
 ## Monitorar
 
 ```bash
-curl --cacert /etc/self-live-relay/tls/cert.pem https://72.61.63.75:8443/health
+curl https://relay.murilod.dev:8443/health
 sudo systemctl status self-live-relay
 sudo journalctl -u self-live-relay -f
 ```
 
-Com domínio, use `https://relay.seudominio.com:8443/health` com a CA pública. Resposta: `{"status":"ok","rooms":0,"peers":0,"uptime":123}`. Salas e peers vivem só em memória; health conta conexões ao relay, não peers que usam apenas WSS local.
+Para outro domínio, use sua URL com a CA pública. Para o certificado self-signed de IP gerado pelo setup, use `curl --cacert /etc/self-live-relay/tls/cert.pem https://72.61.63.75:8443/health`. Resposta: `{"status":"ok","rooms":0,"peers":0,"uptime":123}`. Salas e peers vivem só em memória; health conta conexões ao relay, não peers que usam apenas WSS local.
 
 O serviço limita 100 mensagens/segundo por conexão (incluindo registro), mensagens a 256 KiB, 10 salas simultâneas por IP, 30 peers por sala e 1000 salas por padrão. Peers sem registro são fechados após 5 segundos. Após 60 segundos sem mensagem, envia ping; sem pong em 5 segundos, encerra a conexão. O limite de peers inclui a identidade de transporte do host.
 

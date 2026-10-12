@@ -1,5 +1,7 @@
 # Piloto fechado P2P
 
+[← Self Live](../README.md) · [Documentação](README.md)
+
 Este pacote usa o relay público `wss://relay.murilod.dev:8443` para fallback de
 sinalização e STUN/P2P para mídia. O segredo mestre do TURN não acompanha o pacote.
 Redes que exigem TURN podem conectar à sala e ainda falhar ao receber mídia.
@@ -37,7 +39,7 @@ certificado de assinatura de código; o Windows pode mostrar um aviso de publica
    convite e senha por um canal privado ao PC B.
 5. No PC B, cole o convite, informe a senha de A e clique **Entrar**. A sala local
    de B não precisa ter o mesmo nome ou senha: o convite escolhe a sala de A.
-6. Em A, clique **Quero transmitir**, selecione a fonte e inicie a transmissão.
+6. Em A, clique **Quero transmitir**, selecione a fonte e confirme **Compartilhar**.
    Em B, clique **Assistir**. Confira vídeo, áudio e sinalização/mídia separadamente.
 7. Pare os streams e encerre ambos pela opção **Sair** da bandeja. Fechar a janela
    apenas oculta o dashboard e mantém o aplicativo ativo.
@@ -71,6 +73,11 @@ falha no boot em vez de substituir silenciosamente as credenciais. Para resetar,
 encerre o aplicativo e renomeie o arquivo; o próximo boot cria uma sala nova.
 
 ## Verificações automatizadas
+
+Para investigar engasgos em jogos, ative logs na página inicial antes da captura.
+Eles ficam em **Documentos/SelfLive-Logs**, sem gravação automática ao lado do EXE.
+Veja [o procedimento de auditoria](stream-audit.md). O adaptive reduz trabalho de
+captura, mas não reserva recursos gráficos nem garante fluidez com GPU saturada.
 
 `test:pilot` executa o main/preload reais em um perfil temporário: salva pela UI,
 verifica que a senha não está em texto puro, abre um segundo processo com o mesmo

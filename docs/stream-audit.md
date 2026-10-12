@@ -1,5 +1,7 @@
 # Auditoria de transmissão sob carga
 
+[← Self Live](../README.md) · [Documentação](README.md)
+
 Na página inicial, abra **CONFIGURAÇÕES DE DIAGNÓSTICO** e ative **ATIVAR LOGS DE
 DIAGNÓSTICO** antes de transmitir. O padrão é OFF e a preferência fica em
 `config/local.json`, dentro dos dados do usuário do app. Não exige reinício.
@@ -17,7 +19,7 @@ Se a pasta não puder ser gravada, o app avisa e mantém a transmissão.
    a mesma resolução, FPS e bitrate, sempre limitados a 1920 × 1080.
 2. Nos controles avançados da transmissão, desligue **ADAPTIVE** para o teste
    manual não mudar a qualidade. Conecte um viewer, jogue com FPS ilimitado por
-   30–60 segundos, pare e exporte o diagnóstico pelo diagnóstico geral.
+   pelo menos dois minutos, pare e exporte o diagnóstico pelo diagnóstico geral.
 3. Repita alterando somente o cap de FPS do jogo para 144. Esse cap é configurado
    no jogo; o FPS de captura é outra configuração.
 4. Compare separadamente preview visível/oculto, 60/45/30/20/15 fps de captura e
@@ -63,3 +65,46 @@ O export inclui as últimas 1000 amostras gravadas da sessão, configuração e
 resumo agregado da sessão toda. `samplesTruncated` indica truncamento em sessões
 mais longas. Arquivos exportados não são removidos pela rotação JSONL. O streamer
 não mede a latência completa até a tela do viewer.
+
+## Resultado observado no piloto
+
+Comparação de duas sessões em 12/10/2026, considerando somente amostras com
+viewer conectado. Ambas usaram 1920 × 1080 e mídia P2P direta IPv4.
+
+| Métrica | Sessão com engasgos | Sessão fluida |
+| --- | ---: | ---: |
+| FPS médio da fonte | 14,0 | 53,5 |
+| FPS médio enviado (deltas) | 14,1 | 51,5 |
+| GPU 3D média nas amostras | 91,7% | 35,1% |
+| VideoEncode médio nas amostras | 2,8% | 9,0% |
+| Tempo médio de encode por frame | 6,0 ms | 5,6 ms |
+| RTT médio | 26,7 ms | 26,5 ms |
+| Perda de pacotes reportada | 0 | 0 |
+
+As médias GPU reutilizam leituras de dez segundos. Elas não representam uma
+medição independente a cada amostra nem isolam o processo do jogo.
+
+Na sessão ruim, a fonte entregou poucos frames e o encoder enviou aproximadamente
+a mesma quantidade. Isso sustenta contenção no caminho gráfico antes do encode,
+mas não identifica exclusivamente DWM ou uma operação específica bloqueada.
+Os logs não registram limite de FPS ou configurações gráficas do jogo.
+
+O adaptive ocultou o preview e reduziu 60 → 45 → 30 → 20 fps. Os passos até 30 fps
+não produziram melhora sustentada; a sessão terminou logo depois do ajuste para
+20 fps. A resolução permaneceu FHD: reduções para 720p/540p e recuperação automática
+ainda não foram avaliadas nesse experimento. A sessão fluida foi uma captura
+separada, não uma recuperação registrada na mesma sessão.
+
+Leituras de GPU de 86%/88% interromperam a sequência exigida de ≥90%, apesar da
+fonte continuar lenta. Revisar essa política é uma possibilidade futura, não uma
+correção implementada ou validada. O adaptive atual não resolve todos os casos.
+
+Para investigar mais, mantenha o cenário do jogo e compare, com adaptive OFF:
+1080p60/preview oculto, 720p30, 540p20 e 1080p60 com FPS do jogo limitado.
+Mude uma condição por vez, documente as configurações e conecte sempre um viewer.
+
+## O que está fora do pipeline atual
+
+Captura por CPU a quente, integração OBS, hook na swapchain e integração própria
+DXGI/NVENC/AMF não estão implementados. Prioridade de CPU não reserva GPU. Nenhuma
+dessas alternativas deve ser interpretada como solução garantida a partir dos logs.
