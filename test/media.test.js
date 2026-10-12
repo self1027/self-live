@@ -10,7 +10,8 @@ test('teste local captura com constraints de games e libera tracks se negociaÃ§Ã
     else delete globalThis.navigator;
   });
   let options, applied, stopped = 0, closed = 0;
-  const video = { kind: 'video', stop: () => stopped++, getSettings: () => ({ width: 3840, height: 2160 }), applyConstraints: async value => { applied = value; } };
+  let dimensions = {width:3840,height:2160};
+  const video = { kind: 'video', stop: () => stopped++, getSettings: () => dimensions, applyConstraints: async value => { applied = value; dimensions = {width:value.width.max,height:value.height.max}; } };
   const audio = { kind: 'audio', stop: () => stopped++ };
   const stream = { getVideoTracks: () => [video], getAudioTracks: () => [audio], getTracks: () => [video, audio] };
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {

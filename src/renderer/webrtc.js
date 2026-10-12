@@ -1,13 +1,14 @@
 import { buildIceServers } from './ice.js';
 import { getConnectionDiagnostics } from './connection-stats.js';
 import { attachApplicationAudio } from './application-audio.js';
-import { captureSize, resolutions } from './capture-quality.js';
+import { captureSize, resolutions, captureRates, captureModes, constrainCapture } from './capture-quality.js';
 
 // Constraints compartilhadas pela prévia e pelo teste de codificação local.
-export async function captureSystemMedia({ resolution = 'auto', fps = 60 } = {}) {
-  if ((resolution !== 'auto' && !resolutions.includes(Number(resolution))) || ![15, 30, 60].includes(Number(fps))) throw new Error('Qualidade de captura inválida.');
+export async function captureSystemMedia({ resolution = 'auto', fps = 60, original, videoOnly = false } = {}) {
+  if ((!captureModes.includes(resolution) && !resolutions.includes(Number(resolution))) || !captureRates.includes(Number(fps))) throw new Error('Qualidade de captura inválida.');
+  const target = captureSize(original?.width, original?.height, resolution);
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: { ideal: Number(fps), max: Number(fps) } },
+    video: { width: { max: 1920, ideal: target.width }, height: { max: 1080, ideal: target.height }, frameRate: { ideal: Number(fps), max: Number(fps) } },
     audio: false // Audio is captured separately from the selected application.
   });
   if (!stream.getVideoTracks().length) {
@@ -17,11 +18,15 @@ export async function captureSystemMedia({ resolution = 'auto', fps = 60 } = {})
   try {
     const track = stream.getVideoTracks()[0];
     const settings = track.getSettings();
-    const size = captureSize(settings.width, settings.height, resolution);
-    await track.applyConstraints({ width: { ideal: size.width, max: size.width }, height: { ideal: size.height, max: size.height },
-      frameRate: { ideal: Number(fps), max: Number(fps) }, resizeMode: 'crop-and-scale' });
+    const capabilities = track.getCapabilities?.();
+    // Prefer physical source dimensions; unknown window sizes are not inferred from thumbnails.
+    const source = original?.width && original?.height ? original : capabilities?.width?.max && capabilities?.height?.max ?
+      { width: capabilities.width.max, height: capabilities.height.max } : { width: settings.width, height: settings.height };
+    await constrainCapture(track, { resolution, fps, original: source });
+    stream.captureOriginal = source;
+    stream.originalKnown = Boolean(original?.width && original?.height || capabilities?.width?.max && capabilities?.height?.max);
     // Synthetic QA sources already provide their own isolated audio track.
-    if (!stream.getAudioTracks().length && window.selfLive?.applicationAudioStart) await attachApplicationAudio(stream, window.selfLive);
+    if (!videoOnly && !stream.getAudioTracks().length && window.selfLive?.applicationAudioStart) await attachApplicationAudio(stream, window.selfLive);
   } catch (error) { stream.getTracks().forEach(track => track.stop()); throw error; }
   stream.getVideoTracks()[0].contentHint = 'motion';
   return stream;
