@@ -24,6 +24,8 @@
     "build:audio": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-audio.ps1",
     "predist:pilot": "npm run build:audio",
     "predist": "npm run build:audio",
+    "test:adaptive": "node --test test/adaptive.test.js",
+    "test:logging-toggle": "node --test test/logging-toggle.test.js",
     "test:resolution-cap": "node --test test/resolution-cap.test.js"
   },
   "dependencies": {

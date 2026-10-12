@@ -95,7 +95,8 @@ async function boot(overrides = {}, options = {}) {
   }
   const turn = execute('src/main/turn.js', require);
   const modules = {
-    './media-audit': { createMediaAudit: () => ({ start:()=>({enabled:true}),sample() {},stop() {} }) },
+    './diagnostic-settings': { createDiagnosticSettings: () => ({ load:()=>({loggingEnabled:false,adaptiveQuality:true}), save:value=>value }) },
+    './media-audit': { createMediaAudit: () => ({ start:()=>({enabled:true}),sample() {},stop() {},setEnabled(){},pauseSampling(){},event(){},exportReport:()=>({samples:0}) }) },
     './share-preferences': { createSharePreferences: () => ({ load: () => ({}), save: value => value }) },
     electron,
     './server': { startServers: async () => servers },
@@ -178,7 +179,8 @@ test('handlers TURN/configuração rejeitam outro sender, subframe e origem alte
   const f = await boot();
   for (const name of ['config', 'generate-turn-credentials', 'network-status', 'connectivity',
     'generate-access-link', 'use-access-link', 'pilot-settings', 'pilot-password', 'pilot-save', 'pilot-restart',
-    'application-audio-start', 'application-audio-stop', 'application-audio-sources']) {
+    'application-audio-start', 'application-audio-stop', 'application-audio-sources',
+    'diagnostic-settings', 'diagnostic-settings-save', 'diagnostic-sample', 'diagnostic-event', 'diagnostic-export']) {
     const invoke = event => f.handlers.get(name)(event, 'peer1');
     assert.throws(() => invoke({ ...f.trusted, sender: {} }), /IPC não autorizado/);
     assert.throws(() => invoke({ ...f.trusted, senderFrame: { url: f.trusted.senderFrame.url } }), /IPC não autorizado/);

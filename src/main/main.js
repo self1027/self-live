@@ -16,6 +16,8 @@ const { createPilotConfig, applyPilotDefaults } = require('./pilot-config');
 const { createApplicationAudio } = require('./application-audio');
 const { createSharePreferences } = require('./share-preferences');
 const { createMediaAudit } = require('./media-audit');
+const { createDiagnosticSettings } = require('./diagnostic-settings');
+const { shell } = require('electron');
 
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100');
 // Mantém captura ativa com o dashboard minimizado na bandeja.
@@ -29,10 +31,26 @@ app.whenReady().then(async () => {
   const runtimeEnv = { ...process.env };
   const pilot = createPilotConfig(app.getPath('userData'), safeStorage);
   const sharePreferences = createSharePreferences(app.getPath('userData'));
-  mediaAudit = createMediaAudit({ app });
+  const diagnosticSettings = createDiagnosticSettings(app.getPath('userData'));
+  mediaAudit = createMediaAudit({ app, enabled:diagnosticSettings.load().loggingEnabled });
   ipcMain.handle('media-audit-start', (event, value) => { trusted(event); return mediaAudit.start(value); });
   ipcMain.on('media-audit-sample', (event, value) => { trusted(event); mediaAudit.sample(value); });
   ipcMain.on('media-audit-stop', event => { trusted(event); mediaAudit.stop(); });
+  ipcMain.handle('diagnostic-settings', event => { trusted(event); return diagnosticSettings.load(); });
+  ipcMain.handle('diagnostic-settings-save', (event, value) => {
+    trusted(event);
+    if (value?.loggingEnabled !== undefined && isStreaming) throw new Error('Pare a transmissão para alterar.');
+    const saved = diagnosticSettings.save(value); mediaAudit.setEnabled(saved.loggingEnabled);
+    if (!saved.loggingEnabled && !saved.adaptiveQuality) mediaAudit.pauseSampling();
+    return saved;
+  });
+  ipcMain.handle('diagnostic-sample', (event, value) => { trusted(event); return mediaAudit.sample(value, { adaptive:diagnosticSettings.load().adaptiveQuality }); });
+  ipcMain.handle('diagnostic-event', (event, value) => { trusted(event); mediaAudit.event(value); });
+  ipcMain.handle('diagnostic-export', event => { trusted(event); return mediaAudit.exportReport(diagnosticSettings.load()); });
+  ipcMain.handle('diagnostic-folder', async event => {
+    trusted(event); require('node:fs').mkdirSync(mediaAudit.directory, { recursive:true });
+    const error = await shell.openPath(mediaAudit.directory); if (error) throw new Error('Não foi possível abrir a pasta de logs.');
+  });
   applyPilotDefaults(runtimeEnv, pilot.snapshot(), pilot.password());
   const turn = readTurnConfig(runtimeEnv);
   // O main guarda sua cópia privada; novos renderers não herdam a variável.
@@ -193,7 +211,8 @@ app.whenReady().then(async () => {
     relaySecret = { hash, key: relayKey(value, name) };
     return hash;
   });
-  ipcMain.on('streaming', (event, active) => { trusted(event); tray.update(Boolean(active)); });
+  let isStreaming = false;
+  ipcMain.on('streaming', (event, active) => { trusted(event); isStreaming = Boolean(active); tray.update(isStreaming); });
   window = new BrowserWindow({ width: 1200, height: 850, minWidth: 800, backgroundColor: '#10151d',
     webPreferences: { session: appSession, preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
   window.webContents.setWebRTCUDPPortRange({ min: mediaRange.min, max: mediaRange.max });

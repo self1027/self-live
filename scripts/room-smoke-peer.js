@@ -30,7 +30,7 @@ process.on('message', async command => {
       require('node:fs').writeFileSync(command.code, image.toPNG());
       process.send({ id: command.id, ok: true });
     } else if (command.type === 'audit') {
-      const records = fs.readdirSync(auditDirectory).flatMap(file => fs.readFileSync(path.join(auditDirectory,file),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse));
+      const records = fs.readdirSync(auditDirectory).filter(file=>file.endsWith('.jsonl')).flatMap(file => fs.readFileSync(path.join(auditDirectory,file),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse));
       process.send({ id:command.id, ok:true, result:records });
     } else if (command.type === 'processes') {
       process.send({ id: command.id, ok: true, result: app.getAppMetrics().map(metric => metric.pid) });
@@ -82,13 +82,24 @@ app.whenReady().then(async () => {
   const bitmap = Buffer.alloc(256 * 144 * 4);
   for (let i = 0; i < bitmap.length; i += 4) { bitmap[i] = 130; bitmap[i + 1] = 90; bitmap[i + 2] = 35; bitmap[i + 3] = 255; }
   const thumbnail = nativeImage.createFromBitmap(bitmap, { width: 256, height: 144 }).toDataURL();
-  ipcMain.handle('sources', () => [{ id: 'screen:synthetic', name: 'Canvas de teste', thumbnail, width: 640, height: 360 }]);
+  ipcMain.handle('sources', () => [{ id: 'screen:synthetic', name: 'Canvas de teste', thumbnail, width: 640, height: 360 },
+    {id:'window:synthetic',name:'Janela de teste',thumbnail,width:640,height:360}]);
   let sharePreferences = { audioMode: 'window', applications: [], manual: '', bitrate: '10000000' };
   ipcMain.handle('share-preferences', () => sharePreferences);
   ipcMain.handle('share-preferences-save', (_event, value) => { sharePreferences = value; return value; });
   ipcMain.handle('media-audit-start', (_event, value) => mediaAudit.start(value));
   ipcMain.on('media-audit-sample', (_event, value) => mediaAudit.sample(value));
   ipcMain.on('media-audit-stop', () => mediaAudit.stop());
+  let diagnosticSettings = { loggingEnabled:false, adaptiveQuality:true, previewHidden:false, resolution:'auto', frameRate:60 };
+  ipcMain.handle('diagnostic-settings', () => diagnosticSettings);
+  ipcMain.handle('diagnostic-settings-save', (_event,value) => { diagnosticSettings = {...diagnosticSettings,...value}; mediaAudit.setEnabled(diagnosticSettings.loggingEnabled); return diagnosticSettings; });
+  ipcMain.handle('diagnostic-sample', (_event,value) => mediaAudit.sample(value,{adaptive:diagnosticSettings.adaptiveQuality}));
+  ipcMain.handle('diagnostic-event', (_event,value) => mediaAudit.event(value));
+  ipcMain.handle('diagnostic-export', () => mediaAudit.exportReport(diagnosticSettings));
+  ipcMain.handle('diagnostic-folder', () => {});
+  ipcMain.handle('application-audio-start', () => ({enabled:false,reason:'Sem áudio nativo na fixture'}));
+  ipcMain.on('application-audio-stop', () => {});
+  ipcMain.handle('application-audio-stop', () => {});
   ipcMain.handle('generate-turn-credentials', () => null);
   ipcMain.handle('network-status', () => ({ status: 'unknown' }));
   ipcMain.handle('select-source', () => {});
@@ -105,6 +116,7 @@ app.whenReady().then(async () => {
   } });
   connectivity.attach(window);
   window.webContents.on('console-message', event => {
+    if (event.level === 3) console.error(`[${name}] Renderer: ${event.message}`);
     if (event.message?.startsWith('[Sinalização]')) console.info(`[${name}] ${event.message}`);
   });
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });

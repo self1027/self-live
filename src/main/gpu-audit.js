@@ -11,7 +11,7 @@ Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine | ForEa
 }; $result | ConvertTo-Json -Compress`;
 function sampleGPU(callback) {
   return execFile('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],
-    {windowsHide:true,timeout:4000,maxBuffer:16384}, (error, stdout) => {
+    {windowsHide:true,timeout:8000,maxBuffer:16384}, (error, stdout) => {
       if (error) { callback(null); return; }
       try { const values = JSON.parse(stdout), clean = {};
         for (const key of ['3D','Copy','VideoEncode','VideoDecode','Compute']) if (Number.isFinite(values[key]) && values[key]>=0 && values[key]<=100) clean[key] = values[key];

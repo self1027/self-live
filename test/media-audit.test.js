@@ -29,10 +29,10 @@ test('audit writes per-session bounded JSONL, ends cleanly and preserves other f
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const app={isPackaged:true,getVersion:()=> '0.1.0',getGPUInfo:()=>Promise.resolve({gpuDevice:[]}),getGPUFeatureStatus:()=>({}),getAppMetrics:()=>[],getPath:()=>directory};
   fs.writeFileSync(path.join(directory,'personal.log'),'keep');
-  const audit=createMediaAudit({app,env:{PORTABLE_EXECUTABLE_DIR:directory},maxBytes:66000});
+  const audit=createMediaAudit({app,directory,enabled:true,maxBytes:66000});
   t.after(()=>audit.stop());
   const result=audit.start({width:1280,height:720,password:'secret'});
-  assert.ok(result.enabled && !result.fallback);
+  assert.ok(result.enabled);
   audit.sample({capture:{width:1280},connections:[]}); audit.stop();
   const rows=fs.readFileSync(path.join(directory,result.name),'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(rows[0].type,'start'); assert.equal(rows.at(-1).type,'end');
@@ -41,17 +41,16 @@ test('audit writes per-session bounded JSONL, ends cleanly and preserves other f
   assert.equal(fs.readFileSync(path.join(directory,'personal.log'),'utf8'),'keep');
 });
 
-test('audit retains only generated files and falls back when EXE directory is not writable', t => {
+test('audit retains only generated files and reports unavailable when target directory is not writable', t => {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'self-live-audit-retention-'));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const app={isPackaged:true,getVersion:()=> '0.1.0',getGPUInfo:()=>Promise.resolve({}),getAppMetrics:()=>[],getPath:()=>directory};
-  for(let i=1;i<=4;i++) fs.writeFileSync(path.join(directory,`self-live-audit-2000-01-01T00-00-00-000Z-${i}.jsonl`),'old');
+  for(let i=1;i<=4;i++) fs.writeFileSync(path.join(directory,`diagnostic-2000-01-01T00-00-00-000Z-${i}-000001.jsonl`),'old');
   fs.writeFileSync(path.join(directory,'self-live-audit-personal.jsonl'),'keep');
-  const audit=createMediaAudit({app,directory,keep:2}); audit.start({}); audit.stop();
+  const audit=createMediaAudit({app,directory,enabled:true,keep:2}); audit.start({}); audit.stop();
   assert.equal(fs.readdirSync(directory).filter(file=>file.endsWith('.jsonl')).length,3);
   assert.equal(fs.readFileSync(path.join(directory,'self-live-audit-personal.jsonl'),'utf8'),'keep');
   const blocked=path.join(directory,'not-a-directory'); fs.writeFileSync(blocked,'keep');
-  const fallback=createMediaAudit({app,directory:blocked}); const result=fallback.start({}); fallback.stop();
-  assert.ok(result.enabled && result.fallback);
-  assert.ok(fs.existsSync(path.join(directory,'audit',result.name)));
+  const unavailable=createMediaAudit({app,directory:blocked,enabled:true}); const result=unavailable.start({}); unavailable.stop();
+  assert.equal(result.enabled,false);
 });

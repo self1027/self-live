@@ -5,3 +5,6 @@ dist/
 .env.*
 pilot-config.json
 native/bin/
+config/local.json
+diagnostic-*.jsonl
+experiment-*.json

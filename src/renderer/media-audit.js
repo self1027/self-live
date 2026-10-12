@@ -12,7 +12,7 @@ export function createMediaAuditSampler() {
           (stat.kind || stat.mediaType) !== 'video') continue;
         const row = { type: stat.type };
         const old = before.get(stat.id), seconds = old ? (stat.timestamp - old.timestamp) / 1000 : 0;
-        for (const key of ['framesPerSecond','width','height','frameWidth','frameHeight','framesEncoded','framesSent','framesDecoded','framesDropped','freezeCount','totalFreezesDuration','packetsLost','fractionLost','jitter','roundTripTime','totalEncodeTime','totalDecodeTime','qpSum']) {
+        for (const key of ['frames','framesPerSecond','width','height','frameWidth','frameHeight','framesEncoded','framesSent','framesDecoded','framesDropped','freezeCount','totalFreezesDuration','packetsLost','fractionLost','jitter','roundTripTime','totalEncodeTime','totalDecodeTime','qpSum']) {
           if (Number.isFinite(stat[key]) && stat[key] >= 0) row[key] = stat[key];
         }
         const delta = key => old && Number.isFinite(stat[key]) && Number.isFinite(old[key]) && stat[key] >= old[key] ? stat[key] - old[key] : null;

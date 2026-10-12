@@ -5,11 +5,23 @@ const { sampleGPU } = require('./gpu-audit');
 const numeric = new Set(['framesPerSecond','width','height','frameWidth','frameHeight','framesEncoded','framesSent','framesDecoded','framesDropped','freezeCount','totalFreezesDuration','packetsLost','fractionLost','jitter','roundTripTime','totalEncodeTime','totalDecodeTime','qpSum','sendKbps','receiveKbps','encodedFps','sentFps','decodedFps','encodeMs','decodeMs','sendDelayMs']);
 const enums = { type: ['outbound-rtp','inbound-rtp','media-source','remote-inbound-rtp'], limitation: ['none','cpu','bandwidth','other'], encoder: ['software','hardware-or-external','unknown'] };
 numeric.add('limitationCpuSeconds'); numeric.add('limitationBandwidthSeconds');
+numeric.add('frames');
 function cleanSample(value) {
   const result = { capture: {} , connections: [] };
   for (const key of ['width','height','frameRate','bitrate','viewers']) if (Number.isFinite(value?.capture?.[key]) && value.capture[key] >= 0) result.capture[key] = value.capture[key];
   result.capture.previewVisible = value?.capture?.previewVisible === true;
   result.capture.loopbackActive = value?.capture?.loopbackActive === true;
+  for (const key of ['captureGap','framesCaptured','framesDropped','framesStalled','observedFps']) result[key] = Number.isFinite(value?.[key]) && value[key] >= 0 ? value[key] : null;
+  result.captureStall = typeof value?.captureStall === 'boolean' ? value.captureStall : null;
+  const mode = value?.captureMode || {};
+  result.captureMode = {};
+  for (const key of ['originalResolution','effectiveResolution']) result.captureMode[key] = /^\d{1,5}x\d{1,5}$/.test(mode[key] || '') ? mode[key] : null;
+  result.captureMode.downscaled = mode.downscaled === true;
+  result.captureMode.reason = mode.reason === 'fhd_cap' ? 'fhd_cap' : mode.reason === 'quality' ? 'quality' : null;
+  result.captureMode.frameRate = [15,20,30,45,60].includes(mode.frameRate) ? mode.frameRate : null;
+  result.captureMode.source = ['screen','window'].includes(mode.source) ? mode.source : null;
+  result.captureMode.mode = 'gpu'; // No supported hot CPU-capture switch exists in this pipeline.
+  result.captureMode.previewHidden = mode.previewHidden === true;
   for (const connection of (Array.isArray(value?.connections) ? value.connections : []).slice(0,30)) {
     const safe = { viewer: Number.isInteger(connection?.viewer) && connection.viewer > 0 ? connection.viewer : 0, rows: [] };
     if (['direct','relay','unknown'].includes(connection?.transport?.mode)) safe.transport = {
@@ -27,61 +39,128 @@ function cleanSample(value) {
   }
   return result;
 }
-function createMediaAudit({ app, env = process.env, directory, maxBytes = 5 * 1024 * 1024, keep = 10 }) {
-  const preferred = directory || (app.isPackaged ? env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')) : app.getAppPath());
-  let file, size = 0, last = 0, truncated = false, gpuQuery, gpuDisabled = false, lastGPU = 0;
-  function write(type, data = {}) {
-    if (!file) return;
-    const line = JSON.stringify({ time: new Date().toISOString(), type, ...data }) + '\n';
-    try { fs.appendFileSync(file, line); size += Buffer.byteLength(line); }
-    catch { file = null; }
+function saturation(engines) {
+  return Object.fromEntries(['3D','Copy','VideoEncode','VideoDecode'].map(key => [key,
+    !Number.isFinite(engines?.[key]) ? 'unknown' : engines[key] > 90 ? 'saturated' : engines[key] > 70 ? 'high' : engines[key] > 40 ? 'medium' : 'low']));
+}
+function createMediaAudit({ app, directory, enabled = false, maxBytes = 10 * 1024 * 1024, keep = 5, clock = Date.now, gpuSampler = sampleGPU, platform = process.platform }) {
+  const folder = directory || path.join(app.getPath('documents'), 'SelfLive-Logs');
+  let file, size = 0, sequence = 0, active = false, last = -Infinity, lastGPU = -Infinity, gpuQuery, generation = 0;
+  let gpu = null, gpuTime = null, samples = [], totalSamples = 0, configuration = {}, degradeEvents = 0, recoverEvents = 0, stallEvents = 0, previousStall = false;
+  let sums = {}, maxGpu = null;
+  let recordedDuringSession = false, capturedAdaptive = null;
+  const stamp = () => new Date(clock()).toISOString().replace(/[:.]/g, '-');
+  function open() {
+    fs.mkdirSync(folder, { recursive: true });
+    file = path.join(folder, `diagnostic-${stamp()}-${process.pid}-${String(++sequence).padStart(6,'0')}.jsonl`);
+    fs.writeFileSync(file, '', { mode: 0o600 }); size = 0;
+    const files = fs.readdirSync(folder).filter(name => /^diagnostic-\d{4}-\d{2}-\d{2}T[\dTZ-]+-\d+-\d+\.jsonl$/.test(name)).sort().reverse();
+    for (const old of files.slice(keep)) if (path.join(folder,old) !== file) fs.unlinkSync(path.join(folder, old));
   }
-  function stop(reason = 'stopped') { write('end', { reason: ['stopped','shutdown','restarted'].includes(reason) ? reason : 'stopped' }); file = null; gpuQuery?.kill(); gpuQuery = null; }
-  return {
+  function write(type, data = {}) {
+    if (!enabled || !active) return;
+    const line = JSON.stringify({ time: new Date(clock()).toISOString(), type, ...data }) + '\n';
+    try {
+      if (!file || size + Buffer.byteLength(line) > maxBytes) open();
+      if (Buffer.byteLength(line) > maxBytes) return;
+      fs.appendFileSync(file, line); size += Buffer.byteLength(line);
+    } catch { file = null; }
+  }
+  function stop(reason = 'stopped') {
+    write('end', { reason: ['stopped','shutdown','restarted'].includes(reason) ? reason : 'stopped' });
+    active = false; file = null; generation++; gpuQuery?.kill(); gpuQuery = null;
+  }
+  const add = (key, value) => { if (Number.isFinite(value)) { sums[key] ||= { sum: 0, count: 0 }; sums[key].sum += value; sums[key].count++; } };
+  const average = key => sums[key]?.count ? sums[key].sum / sums[key].count : null;
+  const service = {
     start(value) {
-      stop('restarted'); size = 0; last = 0; truncated = false; lastGPU = 0; gpuDisabled = false;
-      const name = `self-live-audit-${new Date().toISOString().replace(/[:.]/g,'-')}-${process.pid}.jsonl`;
-      let fallback = false;
-      try { fs.mkdirSync(preferred,{recursive:true}); file = path.join(preferred,name); fs.writeFileSync(file,'',{mode:0o600}); }
-      catch {
-        try { const alternate = path.join(app.getPath('userData'),'audit'); fs.mkdirSync(alternate,{recursive:true}); file = path.join(alternate,name); fs.writeFileSync(file,'',{mode:0o600}); fallback = true; }
-        catch { file = null; return { enabled:false }; }
+      stop('restarted'); active = true; samples = []; totalSamples = 0; sums = {}; gpu = null; gpuTime = null; maxGpu = null;
+      degradeEvents = recoverEvents = stallEvents = 0; previousStall = false; last = lastGPU = -Infinity;
+      recordedDuringSession = enabled; capturedAdaptive = null;
+      configuration = cleanSample(value).captureMode;
+      write('start', { schema:2, version:app.getVersion(), windows:os.release(), capture:cleanSample({capture:value}).capture,
+        captureMode:configuration, sampleIntervalMs:2000, gpuIntervalMs:10000, maxBytes });
+      if (enabled) {
+        const token = generation;
+        Promise.resolve(app.getGPUInfo?.('basic')).then(info => {
+          if (!enabled || !active || generation !== token) return;
+          const driver = info?.auxAttributes?.driverVersion;
+          write('hardware', { electron:process.versions.electron, chromium:process.versions.chrome,
+            cpuThreads:os.cpus().length, ramGiB:Math.round(os.totalmem()/1073741824),
+            adapters:(info?.gpuDevice || []).slice(0,4).map(device=>({vendorId:device.vendorId,deviceId:device.deviceId,active:device.active === true})),
+            driverVersion:typeof driver === 'string' && /^[\d. -]{1,64}$/.test(driver) ? driver : null });
+        }).catch(()=>{});
       }
-      // Delete only our generated audit files, never arbitrary logs or user files.
-      try { const folder = path.dirname(file); const files = fs.readdirSync(folder).filter(name => /^self-live-audit-\d{4}-\d{2}-\d{2}T[\dTZ-]+-\d+\.jsonl$/.test(name)).sort().reverse();
-        for (const old of files.slice(keep)) if (path.join(folder,old) !== file) fs.unlinkSync(path.join(folder,old)); } catch { /* Logging remains available. */ }
-      write('start', { schema:1, version:app.getVersion(), electron:process.versions.electron, chromium:process.versions.chrome,
-        windows:os.release(), arch:process.arch, cpuThreads:os.cpus().length, ramGiB:Math.round(os.totalmem()/1073741824),
-        capture:cleanSample({capture:value}).capture, sampleIntervalMs:2000, gpuIntervalMs:10000, maxBytes,
-        policy:{contentHint:'motion',degradationPreference:'maintain-resolution',senderMaxFramerate:60,captureCpuLimit:100} });
-      const current = file;
-      Promise.resolve(app.getGPUInfo?.('basic')).then(info => {
-        if (!file || file !== current) return;
-        const adapters = (info?.gpuDevice || []).map(device => ({ vendorId:device.vendorId, deviceId:device.deviceId, active:device.active === true })).slice(0,4);
-        const driver = info?.auxAttributes?.driverVersion;
-        write('gpu', { adapters, driverVersion:typeof driver === 'string' && /^[\d. -]{1,64}$/.test(driver) ? driver : null,
-          features:Object.fromEntries(Object.entries(app.getGPUFeatureStatus?.() || {}).filter(([key, status]) => ['video_encode','video_decode','gpu_compositing'].includes(key) && ['enabled','disabled_software','unavailable_software','disabled_off','unavailable_off'].includes(status))) });
-      }).catch(()=>{});
-      return { enabled:true, name, fallback };
+      return { enabled: Boolean(enabled && file), name:file ? path.basename(file) : null };
     },
-    sample(value) {
-      if (!file || truncated || Date.now()-last < 1500) return;
-      last = Date.now();
-      if (size > maxBytes - 65536) { write('limit', { reason:'size_limit' }); truncated = true; return; }
-      const data = cleanSample(value);
-      try { data.processes = app.getAppMetrics().map(metric => ({ type:['Browser','GPU','Tab','Utility'].includes(metric.type) ? metric.type : 'Other',
-        cpuPercent:Number.isFinite(metric.cpu?.percentCPUUsage) ? metric.cpu.percentCPUUsage : null,
-        memoryMiB:Number.isFinite(metric.memory?.workingSetSize) ? Math.round(metric.memory.workingSetSize/1024) : null })).slice(0,40); } catch { /* Optional platform metrics. */ }
-      write('sample', data);
-      if (process.platform === 'win32' && !gpuDisabled && !gpuQuery && Date.now()-lastGPU >= 10000) {
-        lastGPU = Date.now(); const current = file, queryStart = lastGPU;
-        gpuQuery = sampleGPU(engines => {
-          if (file !== current) return;
-          gpuQuery = null; gpuDisabled = !engines;
-          if (file && !truncated) write('gpu-load', { available:Boolean(engines), queryMs:Date.now()-queryStart, busiestEnginePercent:engines });
+    setEnabled(value) {
+      if (typeof value !== 'boolean') throw new Error('Logs: valor inválido.');
+      if (!value) { write('end', { reason:'logging_disabled' }); enabled = false; file = null; }
+      else { enabled = true; if (active) recordedDuringSession = true; if (active && !file) write('start', { schema:2, captureMode:configuration, sampleIntervalMs:2000, gpuIntervalMs:10000 }); }
+      return { enabled, recording: Boolean(file) };
+    },
+    pauseSampling() { generation++; gpuQuery?.kill(); gpuQuery = null; gpu = null; gpuTime = null; lastGPU = -Infinity; },
+    sample(value, { adaptive = false } = {}) {
+      if (!active || (!enabled && !adaptive)) {
+        gpuQuery?.kill(); gpuQuery = null; gpu = null; gpuTime = null;
+        return { available:false, busiestEnginePercent:null, engineSaturation:saturation(null) };
+      }
+      const now = clock();
+      if (now - last < 1500) return { available:Boolean(gpu), busiestEnginePercent:gpu, gpuTime, engineSaturation:saturation(gpu) };
+      last = now;
+      const currentGeneration = generation;
+      if (platform === 'win32' && !gpuQuery && now - lastGPU >= 10000) {
+        lastGPU = now;
+        gpuQuery = gpuSampler(engines => {
+          if (!active || generation !== currentGeneration) return;
+          gpuQuery = null; gpu = engines; gpuTime = clock();
+          write('gpu-load', { available:Boolean(engines), queryMs:clock()-now, busiestEnginePercent:engines, engineSaturation:saturation(engines) });
         });
       }
-    }, stop
+      const fresh = gpuTime !== null && now - gpuTime <= 15000 ? gpu : null;
+      const data = { ...cleanSample(value), busiestEnginePercent:fresh, gpuTime, gpuAgeMs:gpuTime === null ? null : now-gpuTime,
+        gpuScope:'system_busiest_engine', engineSaturation:saturation(fresh) };
+      if (enabled) {
+        try { data.processes = app.getAppMetrics().map(metric => ({ type:['Browser','GPU','Tab','Utility'].includes(metric.type) ? metric.type : 'Other',
+          cpuPercent:Number.isFinite(metric.cpu?.percentCPUUsage) ? metric.cpu.percentCPUUsage : null,
+          memoryMiB:Number.isFinite(metric.memory?.workingSetSize) ? Math.round(metric.memory.workingSetSize/1024) : null })).slice(0,40); } catch { /* Optional platform metrics. */ }
+        const record = { time:new Date(now).toISOString(), ...data }; samples.push(record); if (samples.length > 1000) samples.shift(); totalSamples++;
+        configuration = data.captureMode;
+        capturedAdaptive = adaptive;
+        add('source', data.observedFps);
+        const rows = data.connections.flatMap(connection => connection.rows);
+        const outbound = rows.filter(row => row.type === 'outbound-rtp');
+        // Average connections within a sample before averaging samples.
+        for (const [key, field] of [['outbound','sentFps'],['encode','encodeMs']]) {
+          const values = outbound.map(row => row[field]).filter(Number.isFinite); if (values.length) add(key, values.reduce((a,b)=>a+b,0)/values.length);
+        }
+        if (Number.isFinite(fresh?.['3D'])) { add('gpu',fresh['3D']); maxGpu = Math.max(maxGpu ?? 0, fresh['3D']); }
+        if (data.captureStall && !previousStall) stallEvents++; previousStall = data.captureStall === true;
+      }
+      write('sample', data);
+      return { available:Boolean(fresh), busiestEnginePercent:fresh, gpuTime, gpuAgeMs:data.gpuAgeMs, engineSaturation:data.engineSaturation };
+    },
+    event(value) {
+      if (!['degrade','recover','manual','capture_error','cpu_unsupported'].includes(value?.action)) return;
+      const data = { action:value.action, ...cleanSample({ captureMode:value.captureMode }).captureMode };
+      if (value.captureMode) configuration = cleanSample({captureMode:value.captureMode}).captureMode;
+      if (enabled) { if (value.action === 'degrade') degradeEvents++; if (value.action === 'recover') recoverEvents++; }
+      write('adjustment', data);
+    },
+    exportReport(options = {}) {
+      fs.mkdirSync(folder, { recursive:true });
+      const report = { experimentName:'gpu-contention-test', configuration:{ resolution:configuration.effectiveResolution,
+        originalResolution:configuration.originalResolution, frameRate:configuration.frameRate, previewHidden:configuration.previewHidden,
+        captureMode:'gpu', adaptiveQuality:(capturedAdaptive ?? options.adaptiveQuality) === true ? 'on' : 'off', loggingEnabled:recordedDuringSession, fhdCapApplied:configuration.reason === 'fhd_cap' },
+        samples, samplesTruncated:totalSamples > samples.length, totalSamples,
+        summary:{ avgMediaSourceFps:average('source'), avgOutboundFps:average('outbound'), avgEncodeMs:average('encode'),
+          maxGpu3DPercent:maxGpu, avgGpu3dPercent:average('gpu'), stallEvents, degradeEvents, recoverEvents } };
+      const destination = path.join(folder, `experiment-${stamp()}-${process.pid}-${++sequence}.json`);
+      fs.writeFileSync(destination, JSON.stringify(report,null,2), { mode:0o600 });
+      return { name:path.basename(destination), samples:samples.length };
+    },
+    directory:folder, stop
   };
+  return service;
 }
-module.exports = { createMediaAudit, cleanSample };
+module.exports = { createMediaAudit, cleanSample, saturation };

@@ -1,14 +1,16 @@
-﻿import { LocalLoopback, PeerMedia, captureSystemMedia, startLocalLoopbackTest } from './webrtc.js';
+import { LocalLoopback, PeerMedia, captureSystemMedia, startLocalLoopbackTest } from './webrtc.js';
 import { shutdownMedia } from './shutdown.js';
 import { connectSignaling, relaySocket } from './signaling.js';
 import { getConnectionDiagnostics } from './connection-stats.js';
 import { createShareWizard } from './share-wizard.js';
 import { iconButton } from './ui-icons.js';
 import { createMediaAuditSampler } from './media-audit.js';
+import { createCaptureControls } from './capture-controls.js';
 const $ = id => document.getElementById(id);
 const api = window.selfLive;
 const auditSampler = createMediaAuditSampler();
-let auditActive = false;
+const preview = document.getElementById('preview');
+let diagnosticControls;
 const auditStatus = document.createElement('p'); auditStatus.className = 'meta'; auditStatus.id = 'audit-status';
 document.getElementById('encoder-info').after(auditStatus);
 const nodeId = crypto.randomUUID();
@@ -141,7 +143,7 @@ const uiTimer = setInterval(async () => {
       const stats = await connection.pc.getStats();
       const info = getConnectionDiagnostics(stats);
       const outbound = [...stats.values()].find(stat => stat.type === 'outbound-rtp' && stat.kind === 'video');
-      return { peerId: connection.peerId, info, encoder: outbound?.encoderImplementation, audit:{...auditSampler.sample(connection.pc,stats),transport:info} };
+      return { peerId: connection.peerId, info, encoder: outbound?.encoderImplementation, audit:diagnosticControls?.needsMetrics() ? {...auditSampler.sample(connection.pc,stats),transport:info} : null };
     }));
     if (media !== current || !current.stream || shuttingDown) return;
     $('viewer-list').replaceChildren(...results.map(({ peerId, info }) => {
@@ -152,9 +154,7 @@ const uiTimer = setInterval(async () => {
     }));
     if (!results.length) $('viewer-list').textContent = 'Nenhum viewer conectado.';
     const settings = current.stream.getVideoTracks()[0]?.getSettings() || {};
-    if (auditActive) api.mediaAuditSample?.({ capture:{ width:settings.width, height:settings.height, frameRate:settings.frameRate,
-      bitrate:current.bitrate, viewers:results.length, previewVisible:document.visibilityState === 'visible' && Boolean($('preview').getClientRects().length),
-      loopbackActive:Boolean(loopback.sender) }, connections:results.map(result=>result.audit) });
+    await diagnosticControls?.sample(results.map(result => result.audit).filter(Boolean));
     $('capture-info').textContent = `${settings.width || '—'} × ${settings.height || '—'} · ${Math.round(settings.frameRate || 0)} fps · ${current.bitrate / 1000000} Mbps`;
     $('encoder-info').textContent = `H.264 / Opus · ${results.find(result => result.encoder)?.encoder || 'Encoder aguardando conexão'}`;
     if (currentView === 'streaming') renderDiagnostics(results.find(result => result.info.mode === 'relay')?.info || results[0]?.info || { mode: 'unknown', rttMs: null, quality: 'unknown' });
@@ -164,6 +164,7 @@ const uiTimer = setInterval(async () => {
 const failure = error => { console.error(`[Dashboard] ${error.name || 'Error'}`); $('error').textContent = error.message; };
 
 function controls() {
+  diagnosticControls?.update();
   document.body.dataset.busy = String(busy);
   identityControls();
   $('share-password').disabled = !joined || !hosting || busy;
@@ -235,13 +236,13 @@ function updateAudioChoice() {
 }
 
 function stop() {
-  if (auditActive) { auditActive = false; api?.mediaAuditStop?.(); auditSampler.reset(); }
+  diagnosticControls?.stopped(); auditSampler.reset();
   generation++;
   loopback.stop();
   media?.stopStreaming();
   stream?.stopApplicationAudio?.();
   stream?.getTracks().forEach(track => track.stop());
-  stream = null; $('preview').srcObject = null;
+  stream = null; preview.srcObject = null;
   $('audio-live-state').textContent = '';
   $('status').textContent = 'Pronto para capturar'; $('rtc-info').textContent = 'Aguardando captura.';
   if (!media?.watching) $('p2p-status').textContent = 'Transmissão parada.';
@@ -249,16 +250,21 @@ function stop() {
   controls();
 }
 
+async function selectCaptureSource(id) {
+  const mode = $('audio-mode').value;
+  const applications = [...$('audio-app').selectedOptions].filter(option => !option.disabled).map(option => option.value);
+  if (mode === 'on') applications.push(...$('audio-manual').value.split(/[;,\n]/).map(value => value.trim()).filter(Boolean));
+  await api.selectSource(id, mode === 'none' ? { mode:'none', applications:[] } : id.startsWith('window:') ? { mode:'window', sourceId:id } : { mode:'desktop', applications });
+}
+
 async function ensureCapture() {
   if (stream) return stream;
   if (!$('source').value) throw new Error('Selecione uma tela ou janela.');
   const current = generation;
-  const mode = $('audio-mode').value;
-  const applications = [...$('audio-app').selectedOptions].filter(option => !option.disabled).map(option => option.value);
-  if (mode === 'on') applications.push(...$('audio-manual').value.split(/[;,\n]/).map(value => value.trim()).filter(Boolean));
-  await api.selectSource($('source').value, mode === 'none' ? { mode: 'none', applications: [] } :
-    $('source').value.startsWith('window:') ? { mode: 'window', sourceId: $('source').value } : { mode: 'desktop', applications });
-  const captured = await captureSystemMedia({ resolution: $('resolution').value, fps: Number($('capture-fps').value) });
+  await selectCaptureSource($('source').value);
+  const option = $('source').selectedOptions[0];
+  const captured = await captureSystemMedia({ resolution:$('resolution').value, fps:Number($('capture-fps').value),
+    original:{width:Number(option?.dataset.width),height:Number(option?.dataset.height)} });
   if (current !== generation) {
     captured.stopApplicationAudio?.();
     captured.getTracks().forEach(track => track.stop());
@@ -270,7 +276,7 @@ async function ensureCapture() {
   $('capture-info').textContent = `Captura: ${settings.width}×${settings.height} · ${settings.frameRate} fps. Prévia silenciosa.`;
   $('capture-audio-info').textContent = captured.audioNote || 'Áudio da fonte selecionada.';
   captured.addEventListener('application-audio-change', () => { $('capture-audio-info').textContent = captured.audioNote; });
-  $('preview').srcObject = captured;
+  preview.srcObject = captured;
   $('status').textContent = 'Captura ativa'; api.streaming(true);
   return captured;
 }
@@ -540,7 +546,7 @@ $('leave').onclick = () => {
 };
 $('loopback').onclick = () => runMedia(async () => {
   const captured = await ensureCapture();
-  await startLocalLoopbackTest({ loopback, preview: $('preview'), stream: captured, bitrate: Number($('preset').value) });
+  await startLocalLoopbackTest({ loopback, preview: preview, stream: captured, bitrate: Number($('preset').value) });
   $('status').textContent = 'Teste de mídia local ativo';
 });
 $('stop-test').onclick = stop;
@@ -552,15 +558,8 @@ $('start-stream').onclick = () => {
   const captured = await ensureCapture();
   if (connection !== media || !joined) throw new Error('Sala desconectada durante a captura.');
   await media.startStreaming({ stream: captured, bitrate: Number($('preset').value) });
-  if (!auditActive) {
-    auditSampler.reset();
-    try {
-      const settings = captured.getVideoTracks()[0].getSettings();
-      const audit = await api.mediaAuditStart?.({ width:settings.width, height:settings.height, frameRate:settings.frameRate, bitrate:Number($('preset').value) });
-      auditActive = Boolean(audit?.enabled);
-      auditStatus.textContent = audit?.enabled ? `Diagnóstico salvo em ${audit.name}${audit.fallback ? ' (pasta de dados do app; pasta do EXE sem permissão)' : ' (ao lado do EXE)'}.` : 'Não foi possível criar o log de diagnóstico.';
-    } catch { auditStatus.textContent = 'Não foi possível criar o log de diagnóstico. A transmissão continua.'; }
-  }
+  auditSampler.reset();
+  await diagnosticControls.started(captured, $('resolution').value, $('capture-fps').value);
   await shareWizard.complete();
   $('status').textContent = 'Transmitindo';
   });
@@ -568,6 +567,7 @@ $('start-stream').onclick = () => {
 $('stop-stream').onclick = stop;
 $('stop-watch').onclick = () => { media?.stopWatching(); $('p2p-status').textContent = media?.stream ? 'Transmitindo' : 'Viewer parado.'; controls(); };
 $('back-room').onclick = () => $('stop-watch').click();
+diagnosticControls = createCaptureControls({ api, preview, getStream:()=>stream, getMedia:()=>media, getLoopback:()=>loopback.sender, sourceSelect:$('source'), onEnded:stop, onError:failure, selectSource:selectCaptureSource });
 const shareWizard = createShareWizard({ api, refresh, updateAudioChoice, canOpen: () => joined && !busy && !stream && !media?.watching });
 $('want-stream').onclick = () => shareWizard.open();
 $('create-room').onclick = async () => {
@@ -698,7 +698,7 @@ if (api) {
       return item;
     }));
     if (!endpoints.length) $('endpoints').textContent = 'Nenhum endereço externo elegível detectado. Use localhost para testes.';
-    await refresh(); await shareWizard.load(); $('status').textContent = 'Pronto para capturar'; controls();
+    await refresh(); await shareWizard.load(); await diagnosticControls.load(); $('status').textContent = 'Pronto para capturar'; controls();
   } catch (error) { failure(error); }
 } else {
   $('error').textContent = 'Abra este dashboard pelo Self Live (Electron). O navegador externo não possui a ponte de captura.';
