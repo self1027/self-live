@@ -6,6 +6,15 @@ const numeric = new Set(['framesPerSecond','width','height','frameWidth','frameH
 const enums = { type: ['outbound-rtp','inbound-rtp','media-source','remote-inbound-rtp'], limitation: ['none','cpu','bandwidth','other'], encoder: ['software','hardware-or-external','unknown'] };
 numeric.add('limitationCpuSeconds'); numeric.add('limitationBandwidthSeconds');
 numeric.add('frames');
+function cleanLifecycle(value) {
+  if (!value) return undefined;
+  const state = value.source || {};
+  return {status:['live','background','waiting','recovering'].includes(value.status) ? value.status : 'waiting',
+    reason:['minimized','hidden','unfocused','source_missing','track_ended','track_muted','no_frames','awaiting_frames','retry_failed'].includes(value.reason) ? value.reason : null,
+    trackMuted:value.trackMuted === true,trackState:['live','ended'].includes(value.trackState) ? value.trackState : 'unknown',
+    suppressAdaptive:value.suppressAdaptive === true,source:{kind:['screen','window'].includes(state.kind) ? state.kind : 'unknown',
+      available:state.available === true,...Object.fromEntries(['exists','minimized','visible','focused'].map(key=>[key,typeof state[key] === 'boolean' ? state[key] : null]))}};
+}
 function cleanSample(value) {
   const result = { capture: {} , connections: [] };
   for (const key of ['width','height','frameRate','bitrate','viewers']) if (Number.isFinite(value?.capture?.[key]) && value.capture[key] >= 0) result.capture[key] = value.capture[key];
@@ -13,6 +22,7 @@ function cleanSample(value) {
   result.capture.loopbackActive = value?.capture?.loopbackActive === true;
   for (const key of ['captureGap','framesCaptured','framesDropped','framesStalled','observedFps']) result[key] = Number.isFinite(value?.[key]) && value[key] >= 0 ? value[key] : null;
   result.captureStall = typeof value?.captureStall === 'boolean' ? value.captureStall : null;
+  result.captureLifecycle = cleanLifecycle(value?.captureLifecycle);
   const mode = value?.captureMode || {};
   result.captureMode = {};
   for (const key of ['originalResolution','effectiveResolution']) result.captureMode[key] = /^\d{1,5}x\d{1,5}$/.test(mode[key] || '') ? mode[key] : null;
@@ -43,12 +53,14 @@ function saturation(engines) {
   return Object.fromEntries(['3D','Copy','VideoEncode','VideoDecode'].map(key => [key,
     !Number.isFinite(engines?.[key]) ? 'unknown' : engines[key] > 90 ? 'saturated' : engines[key] > 70 ? 'high' : engines[key] > 40 ? 'medium' : 'low']));
 }
-function createMediaAudit({ app, directory, enabled = false, maxBytes = 10 * 1024 * 1024, keep = 5, clock = Date.now, gpuSampler = sampleGPU, platform = process.platform }) {
+function createMediaAudit({ app, directory, enabled = false, maxBytes = 10 * 1024 * 1024, keep = 5, clock = Date.now, gpuSampler = sampleGPU, platform = process.platform,
+  gpuPriorityProvider = () => ({ enabled:false, state:'disabled', targets:[] }) }) {
   const folder = directory || path.join(app.getPath('documents'), 'SelfLive-Logs');
   let file, size = 0, sequence = 0, active = false, last = -Infinity, lastGPU = -Infinity, gpuQuery, generation = 0;
   let gpu = null, gpuTime = null, samples = [], totalSamples = 0, configuration = {}, degradeEvents = 0, recoverEvents = 0, stallEvents = 0, previousStall = false;
   let sums = {}, maxGpu = null;
   let recordedDuringSession = false, capturedAdaptive = null;
+  let initialGpuPriority = null, gpuPriorityEvents = [], captureStateEvents = [];
   const stamp = () => new Date(clock()).toISOString().replace(/[:.]/g, '-');
   function open() {
     fs.mkdirSync(folder, { recursive: true });
@@ -77,8 +89,10 @@ function createMediaAudit({ app, directory, enabled = false, maxBytes = 10 * 102
       stop('restarted'); active = true; samples = []; totalSamples = 0; sums = {}; gpu = null; gpuTime = null; maxGpu = null;
       degradeEvents = recoverEvents = stallEvents = 0; previousStall = false; last = lastGPU = -Infinity;
       recordedDuringSession = enabled; capturedAdaptive = null;
+      initialGpuPriority = gpuPriorityProvider(); gpuPriorityEvents = [];
+      captureStateEvents = [];
       configuration = cleanSample(value).captureMode;
-      write('start', { schema:2, version:app.getVersion(), windows:os.release(), capture:cleanSample({capture:value}).capture,
+      write('start', { schema:3, version:app.getVersion(), windows:os.release(), gpuPriority:initialGpuPriority, capture:cleanSample({capture:value}).capture,
         captureMode:configuration, sampleIntervalMs:2000, gpuIntervalMs:10000, maxBytes });
       if (enabled) {
         const token = generation;
@@ -96,7 +110,7 @@ function createMediaAudit({ app, directory, enabled = false, maxBytes = 10 * 102
     setEnabled(value) {
       if (typeof value !== 'boolean') throw new Error('Logs: valor inválido.');
       if (!value) { write('end', { reason:'logging_disabled' }); enabled = false; file = null; }
-      else { enabled = true; if (active) recordedDuringSession = true; if (active && !file) write('start', { schema:2, captureMode:configuration, sampleIntervalMs:2000, gpuIntervalMs:10000 }); }
+      else { enabled = true; if (active) recordedDuringSession = true; if (active && !file) write('start', { schema:3, gpuPriority:gpuPriorityProvider(), captureMode:configuration, sampleIntervalMs:2000, gpuIntervalMs:10000 }); }
       return { enabled, recording: Boolean(file) };
     },
     pauseSampling() { generation++; gpuQuery?.kill(); gpuQuery = null; gpu = null; gpuTime = null; lastGPU = -Infinity; },
@@ -121,6 +135,7 @@ function createMediaAudit({ app, directory, enabled = false, maxBytes = 10 * 102
       const data = { ...cleanSample(value), busiestEnginePercent:fresh, gpuTime, gpuAgeMs:gpuTime === null ? null : now-gpuTime,
         gpuScope:'system_busiest_engine', engineSaturation:saturation(fresh) };
       if (enabled) {
+        data.gpuPriority = gpuPriorityProvider();
         try { data.processes = app.getAppMetrics().map(metric => ({ type:['Browser','GPU','Tab','Utility'].includes(metric.type) ? metric.type : 'Other',
           cpuPercent:Number.isFinite(metric.cpu?.percentCPUUsage) ? metric.cpu.percentCPUUsage : null,
           memoryMiB:Number.isFinite(metric.memory?.workingSetSize) ? Math.round(metric.memory.workingSetSize/1024) : null })).slice(0,40); } catch { /* Optional platform metrics. */ }
@@ -141,17 +156,33 @@ function createMediaAudit({ app, directory, enabled = false, maxBytes = 10 * 102
       return { available:Boolean(fresh), busiestEnginePercent:fresh, gpuTime, gpuAgeMs:data.gpuAgeMs, engineSaturation:data.engineSaturation };
     },
     event(value) {
+      if (value?.action === 'capture_state') {
+        const captureLifecycle = cleanLifecycle(value.captureLifecycle);
+        if (!captureLifecycle || !active || !enabled) return;
+        captureStateEvents.push({time:new Date(clock()).toISOString(),captureLifecycle});
+        if (captureStateEvents.length > 100) captureStateEvents.shift();
+        write('capture-state',{captureLifecycle}); return;
+      }
       if (!['degrade','recover','manual','capture_error','cpu_unsupported'].includes(value?.action)) return;
       const data = { action:value.action, ...cleanSample({ captureMode:value.captureMode }).captureMode };
       if (value.captureMode) configuration = cleanSample({captureMode:value.captureMode}).captureMode;
       if (enabled) { if (value.action === 'degrade') degradeEvents++; if (value.action === 'recover') recoverEvents++; }
       write('adjustment', data);
     },
+    gpuPriorityChanged(state) {
+      if (!active || !enabled) return;
+      const record = { time:new Date(clock()).toISOString(), gpuPriority:state };
+      gpuPriorityEvents.push(record); if (gpuPriorityEvents.length > 100) gpuPriorityEvents.shift();
+      write('gpu-priority', { gpuPriority:state });
+    },
     exportReport(options = {}) {
       fs.mkdirSync(folder, { recursive:true });
       const report = { experimentName:'gpu-contention-test', configuration:{ resolution:configuration.effectiveResolution,
         originalResolution:configuration.originalResolution, frameRate:configuration.frameRate, previewHidden:configuration.previewHidden,
-        captureMode:'gpu', adaptiveQuality:(capturedAdaptive ?? options.adaptiveQuality) === true ? 'on' : 'off', loggingEnabled:recordedDuringSession, fhdCapApplied:configuration.reason === 'fhd_cap' },
+        captureMode:'gpu', gpuPriorityEnabled:initialGpuPriority?.enabled === true, gpuPriority:initialGpuPriority,
+        adaptiveQuality:(capturedAdaptive ?? options.adaptiveQuality) === true ? 'on' : 'off', loggingEnabled:recordedDuringSession, fhdCapApplied:configuration.reason === 'fhd_cap' },
+        gpuPriorityEvents,
+        captureStateEvents,
         samples, samplesTruncated:totalSamples > samples.length, totalSamples,
         summary:{ avgMediaSourceFps:average('source'), avgOutboundFps:average('outbound'), avgEncodeMs:average('encode'),
           maxGpu3DPercent:maxGpu, avgGpu3dPercent:average('gpu'), stallEvents, degradeEvents, recoverEvents } };

@@ -1,6 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const loadRenderer = require('../scripts/load-renderer-module');
+test('temporary track end delegates to capture recovery without sending stream_stopped',async()=>{
+  const {PeerMedia}=await loadRenderer('webrtc.js');
+  const track=new EventTarget();track.kind='video';track.getSettings=()=>({width:1280,height:720,frameRate:60});track.stop=()=>{};
+  const stream={active:true,recoverVideoCapture:true,getVideoTracks:()=>[track],getTracks:()=>[track]};
+  const messages=[];const media=new PeerMedia({nodeId:'host',send:value=>messages.push(value),video:{srcObject:null},report(){}});
+  await media.startStreaming({stream});const id=media.streamId;track.dispatchEvent(new Event('ended'));
+  assert.equal(media.stream,stream);assert.equal(media.streamId,id);assert.ok(!messages.some(value=>value.type==='stream_stopped'));
+  media.stopStreaming();assert.equal(messages.at(-1).type,'stream_stopped');
+});
 
 test('ICE anterior ao SDP aguarda; troca de viewer ignora sessão antiga e peer inativo rejeita watch', async t => {
   const original = globalThis.RTCPeerConnection;

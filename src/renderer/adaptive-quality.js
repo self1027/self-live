@@ -20,6 +20,10 @@ export function createAdaptiveQuality(base, original = { width:1920, height:1080
     eligible,
     current: () => ({ ...ladder[index] }),
     observe(sample, now = Date.now()) {
+      if (sample?.sourcePaused === true) {
+        saturated = stalled = recovery = count = 0;
+        return null;
+      }
       const gpu = sample?.busiestEnginePercent?.['3D'];
       const fresh = Number.isFinite(gpu) && (sample.gpuAgeMs == null || sample.gpuAgeMs <= 15000);
       saturated = fresh && gpu >= 90 ? saturated + 1 : 0;

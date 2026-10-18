@@ -261,7 +261,8 @@ async function ensureCapture() {
   if (stream) return stream;
   if (!$('source').value) throw new Error('Selecione uma tela ou janela.');
   const current = generation;
-  await selectCaptureSource($('source').value);
+  const sourceId = $('source').value;
+  await selectCaptureSource(sourceId);
   const option = $('source').selectedOptions[0];
   const captured = await captureSystemMedia({ resolution:$('resolution').value, fps:Number($('capture-fps').value),
     original:{width:Number(option?.dataset.width),height:Number(option?.dataset.height)} });
@@ -270,8 +271,14 @@ async function ensureCapture() {
     captured.getTracks().forEach(track => track.stop());
     throw new Error('Captura cancelada.');
   }
+  try { await api.confirmCaptureSource?.(sourceId); }
+  catch(error) { captured.stopApplicationAudio?.();captured.getTracks().forEach(track=>track.stop());throw error; }
+  if (current !== generation) {
+    captured.stopApplicationAudio?.();captured.getTracks().forEach(track=>track.stop());throw new Error('Captura cancelada.');
+  }
   stream = captured;
-  captured.getVideoTracks()[0].addEventListener('ended', stop, { once: true });
+  captured.recoverVideoCapture = true;
+  captured.getVideoTracks()[0].addEventListener('ended', () => { if (stream === captured) diagnosticControls.captureEnded(); }, { once: true });
   const settings = captured.getVideoTracks()[0].getSettings();
   $('capture-info').textContent = `Captura: ${settings.width}×${settings.height} · ${settings.frameRate} fps. Prévia silenciosa.`;
   $('capture-audio-info').textContent = captured.audioNote || 'Áudio da fonte selecionada.';
@@ -642,17 +649,43 @@ $('play-pause').onclick = async () => {
 $('p2p-video').onplay = () => { iconButton($('play-pause'), 'pause', 'Pausar vídeo'); };
 $('p2p-video').onpause = () => { iconButton($('play-pause'), 'play', 'Reproduzir vídeo'); };
 $('volume').oninput = () => { $('p2p-video').volume = Number($('volume').value); };
+const watchStage = $('watch-video-stage'), watchVideo = $('p2p-video');
+let fitFrame;
+function fitWatchVideo() {
+  cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(() => {
+    const width = watchStage.clientWidth, height = watchStage.clientHeight;
+    if (!width || !height) return;
+    const sourceWidth = watchVideo.videoWidth || 16, sourceHeight = watchVideo.videoHeight || 9;
+    const scale = Math.min(width/sourceWidth,height/sourceHeight);
+    watchVideo.style.width = `${sourceWidth*scale}px`;
+    watchVideo.style.height = `${sourceHeight*scale}px`;
+  });
+}
+new ResizeObserver(fitWatchVideo).observe(watchStage);
+for (const event of ['loadedmetadata','resize','emptied']) watchVideo.addEventListener(event,fitWatchVideo);
 $('theater-toggle').onclick = () => setTheater(!document.body.classList.contains('watching-theater'));
-$('fullscreen-toggle').onclick = async () => {
+let fullscreenChanging = false;
+async function toggleFullscreen() {
+  if (fullscreenChanging) return;
+  fullscreenChanging = true; $('fullscreen-toggle').disabled = true;
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
-    else await $('watch-player-container').requestFullscreen();
+    else if (currentView === 'watching') await $('watch-player-container').requestFullscreen();
   } catch (error) { failure(error); }
-};
+  finally { fullscreenChanging = false; $('fullscreen-toggle').disabled = false; fitWatchVideo(); }
+}
+$('fullscreen-toggle').onclick = toggleFullscreen;
 document.addEventListener('fullscreenchange', () => {
-  const fullscreen = Boolean(document.fullscreenElement);
-  iconButton($('fullscreen-toggle'), 'fullscreen', fullscreen ? 'Sair da tela cheia' : 'Entrar em tela cheia');
-  $('fullscreen-toggle').setAttribute('aria-label', fullscreen ? 'Sair da tela cheia' : 'Entrar em tela cheia');
+  const fullscreen = document.fullscreenElement === $('watch-player-container');
+  iconButton($('fullscreen-toggle'), fullscreen ? 'fullscreen-exit' : 'fullscreen', fullscreen ? 'Sair da tela cheia' : 'Entrar em tela cheia');
+  $('fullscreen-toggle').setAttribute('aria-pressed', String(fullscreen));
+  fitWatchVideo();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.fullscreenElement === $('watch-player-container')) {
+    event.preventDefault(); void toggleFullscreen();
+  }
 });
 $('sound').onchange = () => { $('remote').muted = !$('sound').checked; };
 $('p2p-sound').onchange = () => { $('p2p-video').muted = !$('p2p-sound').checked; };

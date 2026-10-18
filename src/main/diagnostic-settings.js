@@ -1,9 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const defaults = { loggingEnabled: false, adaptiveQuality: true, previewHidden: false, resolution: 'auto', frameRate: 60 };
+const defaults = { loggingEnabled: false, gpuPriorityEnabled: false, adaptiveQuality: true, previewHidden: false, resolution: 'auto', frameRate: 60 };
 function validate(value) {
   const result = { ...defaults };
-  for (const key of ['loggingEnabled', 'adaptiveQuality', 'previewHidden']) {
+  for (const key of ['loggingEnabled', 'gpuPriorityEnabled', 'adaptiveQuality', 'previewHidden']) {
     if (value?.[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Configuração de diagnóstico inválida.');
     if (value?.[key] !== undefined) result[key] = value[key];
   }

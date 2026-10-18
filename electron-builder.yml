@@ -10,6 +10,10 @@ files:
 extraResources:
   - from: native/bin/app-audio.exe
     to: audio/app-audio.exe
+  - from: native/bin/gpu-priority.exe
+    to: gpu-priority/gpu-priority.exe
+  - from: native/bin/capture-state.exe
+    to: capture-state/capture-state.exe
 win:
   target: msi
 msi:

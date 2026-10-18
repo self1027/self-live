@@ -108,6 +108,8 @@ async function startServers(roomName, hash, options = {}) {
     ['/ui-icons.js', ['ui-icons.js', 'text/javascript']],
     ['/media-audit.js', ['media-audit.js', 'text/javascript']],
     ['/capture-controls.js', ['capture-controls.js', 'text/javascript']],
+    ['/capture-lifecycle.js', ['capture-lifecycle.js', 'text/javascript']],
+    ['/replace-capture-video.js', ['replace-capture-video.js', 'text/javascript']],
     ['/adaptive-quality.js', ['adaptive-quality.js', 'text/javascript']],
     ['/signaling.js', ['signaling.js', 'text/javascript']],
     ['/styles.css', ['styles.css', 'text/css']]

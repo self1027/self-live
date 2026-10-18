@@ -7,8 +7,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { createMediaAudit } = require('../src/main/media-audit');
+const { createGpuPriority } = require('../src/main/gpu-priority');
+let gpuPriority;
+let simulatedCaptureState = {kind:'screen',available:false};
 const auditDirectory = fs.mkdtempSync(path.join(os.tmpdir(),'self-live-audit-ui-'));
-const mediaAudit = createMediaAudit({app,directory:auditDirectory});
+const mediaAudit = createMediaAudit({app,directory:auditDirectory,gpuPriorityProvider:()=>gpuPriority?.snapshot()});
 app.on('will-quit',()=> { mediaAudit.stop('shutdown'); fs.rmSync(auditDirectory,{recursive:true,force:true}); });
 const { getPreferredEndpoints } = require('../src/main/network');
 const { createShutdown } = require('../src/main/shutdown');
@@ -20,12 +23,19 @@ const room = process.env.SELF_LIVE_SMOKE_ROOM || 'smoke';
 const password = process.env.SELF_LIVE_SMOKE_PASSWORD || 'senha';
 let servers, window, tray, connectivity, quitting = false;
 const shutdown = createShutdown({ app, ipcMain, getWindow: () => window, getServers: () => servers,
+  closePorts:async()=>{await gpuPriority?.setEnabled(false);},
   getTray: () => tray, onStart: () => { quitting = true; } });
 app.on('before-quit', event => { event.preventDefault(); void shutdown(); });
 
 process.on('message', async command => {
   try {
-    if (command.type === 'screenshot') {
+    if (command.type === 'resize-window') {
+      window.setContentSize(command.code.width,command.code.height);
+      process.send({id:command.id,ok:true});
+    } else if (command.type === 'capture-state') {
+      simulatedCaptureState = command.code;
+      process.send({id:command.id,ok:true});
+    } else if (command.type === 'screenshot') {
       const image = await window.webContents.capturePage();
       require('node:fs').writeFileSync(command.code, image.toPNG());
       process.send({ id: command.id, ok: true });
@@ -90,9 +100,18 @@ app.whenReady().then(async () => {
   ipcMain.handle('media-audit-start', (_event, value) => mediaAudit.start(value));
   ipcMain.on('media-audit-sample', (_event, value) => mediaAudit.sample(value));
   ipcMain.on('media-audit-stop', () => mediaAudit.stop());
-  let diagnosticSettings = { loggingEnabled:false, adaptiveQuality:true, previewHidden:false, resolution:'auto', frameRate:60 };
+  let diagnosticSettings = { loggingEnabled:false, gpuPriorityEnabled:false, adaptiveQuality:true, previewHidden:false, resolution:'auto', frameRate:60 };
+  gpuPriority = createGpuPriority({app,onChange:state=>{
+    mediaAudit.gpuPriorityChanged(state);
+    if(window && !window.isDestroyed()) window.webContents.send('gpu-priority-status',state);
+  }});
+  ipcMain.handle('gpu-priority-status',()=>gpuPriority.snapshot());
   ipcMain.handle('diagnostic-settings', () => diagnosticSettings);
-  ipcMain.handle('diagnostic-settings-save', (_event,value) => { diagnosticSettings = {...diagnosticSettings,...value}; mediaAudit.setEnabled(diagnosticSettings.loggingEnabled); return diagnosticSettings; });
+  ipcMain.handle('diagnostic-settings-save', async (_event,value) => {
+    diagnosticSettings = {...diagnosticSettings,...value}; mediaAudit.setEnabled(diagnosticSettings.loggingEnabled);
+    if(value.gpuPriorityEnabled !== undefined) await gpuPriority.setEnabled(value.gpuPriorityEnabled);
+    return diagnosticSettings;
+  });
   ipcMain.handle('diagnostic-sample', (_event,value) => mediaAudit.sample(value,{adaptive:diagnosticSettings.adaptiveQuality}));
   ipcMain.handle('diagnostic-event', (_event,value) => mediaAudit.event(value));
   ipcMain.handle('diagnostic-export', () => mediaAudit.exportReport(diagnosticSettings));
@@ -103,6 +122,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('generate-turn-credentials', () => null);
   ipcMain.handle('network-status', () => ({ status: 'unknown' }));
   ipcMain.handle('select-source', () => {});
+  ipcMain.handle('capture-source-state', () => simulatedCaptureState);
+  ipcMain.handle('capture-recover', () => {});
+  ipcMain.handle('capture-confirm', () => {});
   ipcMain.handle('application-audio-sources', () => ({ available: true, applications: [
     {name:'JogoQA.exe',blocked:false},{name:'PlayerQA.exe',blocked:false},{name:'Discord.exe',blocked:true}
   ] }));
@@ -114,6 +136,7 @@ app.whenReady().then(async () => {
     session: ses, preload: path.join(__dirname, '../src/main/preload.js'),
     contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false
   } });
+  require('../src/main/capture').setupCaptureHandlers(ses,()=>window,servers.url);
   connectivity.attach(window);
   window.webContents.on('console-message', event => {
     if (event.level === 3) console.error(`[${name}] Renderer: ${event.message}`);
@@ -124,7 +147,7 @@ app.whenReady().then(async () => {
   await window.loadURL(servers.url);
   await window.webContents.executeJavaScript(`
     (async () => {
-    window.smoke = { connections: [] };
+    window.smoke = { connections: [],captures:[],sourceSuspended:false };
     const blocked = ${JSON.stringify(process.env.SELF_LIVE_SMOKE_BLOCKED_URL || '')};
     const target = ${JSON.stringify(process.env.SELF_LIVE_SMOKE_BLOCKED_TARGET || '')};
     if (blocked) {
@@ -141,14 +164,17 @@ app.whenReady().then(async () => {
     navigator.mediaDevices.getDisplayMedia = async () => {
       const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 360;
       const ctx = canvas.getContext('2d'); let frame = 0;
-      const timer = setInterval(() => { ctx.fillStyle = frame++ % 2 ? '#d33682' : '#268bd2'; ctx.fillRect(0,0,640,360); }, 33);
+      const timer = setInterval(() => { if (window.smoke.sourceSuspended) return; ctx.fillStyle = frame++ % 2 ? '#d33682' : '#268bd2'; ctx.fillRect(0,0,640,360); }, 33);
       const stream = canvas.captureStream(30);
       const audio = new AudioContext(); await audio.resume();
       const tone = audio.createOscillator(); tone.frequency.value = 440;
       const destination = audio.createMediaStreamDestination(); tone.connect(destination); tone.start();
       stream.addTrack(destination.stream.getAudioTracks()[0]);
+      const audioTrack = stream.getAudioTracks()[0], stopAudio = audioTrack.stop.bind(audioTrack);
+      audioTrack.stop = () => { stopAudio(); audio.close().catch(() => {}); };
       const nativeStop = stream.getVideoTracks()[0].stop.bind(stream.getVideoTracks()[0]);
-      stream.getVideoTracks()[0].stop = () => { clearInterval(timer); audio.close().catch(() => {}); nativeStop(); };
+      stream.getVideoTracks()[0].stop = () => { clearInterval(timer); nativeStop(); };
+      window.smoke.captures.push(stream);
       return stream;
     };
     document.getElementById('password').value = ${JSON.stringify(password)};

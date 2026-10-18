@@ -230,7 +230,7 @@ export class PeerMedia {
       this.bitrate = bitrate;
       const captured = this.stream;
       captured.getVideoTracks()[0].addEventListener('ended', () => {
-        if (this.stream === captured) this.stopStreaming();
+        if (this.stream === captured && !captured.recoverVideoCapture) this.stopStreaming();
       }, { once: true });
       this.streamId = crypto.randomUUID();
       const settings = this.stream.getVideoTracks()[0].getSettings();

@@ -1,6 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const load = require('../scripts/load-renderer-module');
+test('source pauses and resume grace never degrade quality or preserve pre-pause saturation counters',async()=>{
+  const {createAdaptiveQuality}=await load('adaptive-quality.js');
+  const policy=createAdaptiveQuality({frameRate:60});
+  const bad={busiestEnginePercent:{'3D':99},captureStall:true};
+  for(let n=1;n<=3;n++)policy.observe(bad,n*2000);
+  for(let n=4;n<40;n++)assert.equal(policy.observe({...bad,sourcePaused:true},n*2000),null);
+  for(let n=40;n<43;n++)assert.equal(policy.observe(bad,n*2000),null);
+  assert.equal(policy.current().frameRate,60);
+});
 test('adaptive degrades only with GPU saturation AND capture stalls, commits after success and obeys cooldown', async () => {
   const {createAdaptiveQuality} = await load('adaptive-quality.js');
   const policy = createAdaptiveQuality({resolution:'auto',frameRate:60,previewHidden:false},{width:3840,height:2160});

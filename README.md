@@ -71,6 +71,8 @@ npm ci
 npm run check
 npm test
 npm run build:audio
+npm run build:gpu-priority
+npm run build:capture-state
 npm start
 ```
 
@@ -80,7 +82,7 @@ Para gerar o portátil:
 npm run dist:pilot
 ```
 
-Saída: `dist/Self-Live-0.1.0-x64.exe`. O comando compila o helper de áudio antes
+Saída: `dist/Self-Live-0.1.0-x64.exe`. O comando compila os helpers nativos antes
 do empacotamento. `npm run dist` mantém o alvo MSI.
 
 ## Áudio que acompanha o compartilhamento
@@ -142,6 +144,17 @@ sem gravar arquivos. Nos controles avançados, desligue-o para comparar ajustes
 manuais. Limitar o FPS **do jogo** é diferente de limitar o FPS da captura.
 
 [Procedimento de auditoria, resultados e limites das métricas →](docs/stream-audit.md)
+
+Para comparar sob carga, o checkbox **usar prioridade de gpu**, junto dos logs,
+solicita prioridade GPU HIGH aos processos do aplicativo. Vem desligado e mostra
+se o Windows confirmou a aplicação no processo GPU. Pare a captura para alterar;
+os logs/export distinguem a solicitação do resultado efetivo. A opção é experimental.
+
+Alt+Tab e minimização da janela compartilhada preservam a sessão e o áudio.
+O adaptive mantém a qualidade durante a pausa e a retomada da fonte; se o vídeo
+não voltar sozinho, o app tenta recuperar a mesma janela sem reconectar os viewers.
+Se o jogo suspender a renderização ao minimizar, a última imagem permanece até
+ele voltar a produzir frames.
 
 ## Privacidade
 

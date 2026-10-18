@@ -1,9 +1,15 @@
 const { desktopCapturer, screen } = require('electron');
 
 function setupCaptureHandlers(session, getWindow, origin) {
-  let selected, audioSource;
-  session.setPermissionRequestHandler((contents, permission, callback) => {
-    callback(contents === getWindow()?.webContents && contents.getURL().startsWith(origin + '/') && ['media', 'display-capture'].includes(permission));
+  let selected, audioSource, activeSource, issuedSource;
+  session.setPermissionRequestHandler((contents, permission, callback, details = {}) => {
+    let trustedRequest = false;
+    try {
+      trustedRequest = contents === getWindow()?.webContents && new URL(contents.getURL()).origin === origin &&
+        (!details.requestingUrl || new URL(details.requestingUrl).origin === origin);
+    } catch { /* Missing or invalid request origin stays denied. */ }
+    callback(trustedRequest && ['media', 'display-capture','fullscreen'].includes(permission) &&
+      (permission !== 'fullscreen' || details.isMainFrame !== false));
   });
   session.setDisplayMediaRequestHandler(async (request, callback) => {
     let response = null; // null é a negativa explícita da API; rejeita getDisplayMedia.
@@ -19,6 +25,7 @@ function setupCaptureHandlers(session, getWindow, origin) {
         // Revalida a janela após a operação assíncrona.
         if (source && request.frame === getWindow()?.webContents.mainFrame) {
           response = { video: source }; // Never capture the mixed system output.
+          issuedSource = source.id;
         }
       }
     } catch (error) {
@@ -30,6 +37,15 @@ function setupCaptureHandlers(session, getWindow, origin) {
     catch (error) { console.error('Falha ao responder à solicitação de captura:', error); }
   });
   return {
+    activeSource: () => activeSource,
+    confirm(id) {
+      if (!id || id !== issuedSource) throw new Error('Fonte de captura não confirmada.');
+      activeSource = id;
+    },
+    recover() {
+      if (!activeSource) throw new Error('Nenhuma fonte de captura ativa.');
+      selected = activeSource; // Rearm only the already selected source, never a desktop fallback.
+    },
     async sources() {
       const displays = screen?.getAllDisplays() || [];
       return (await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 640, height: 360 } }))

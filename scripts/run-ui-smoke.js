@@ -63,8 +63,17 @@ async function view(peer, name) {
   await waitFor(peer, `document.body.dataset.view === '${name}'`);
   assert.equal(await evaluate(peer, `['landing','room','streaming','watching'].filter(name => !document.getElementById('view-' + name).classList.contains('hidden')).join()`), name);
 }
-const screenshots = path.resolve(__dirname, '../docs/screenshots');
+const screenshots = process.env.SELF_LIVE_SMOKE_SCREENSHOTS || path.resolve(__dirname, '../docs/screenshots');
 async function screenshot(peer, name) { await delay(200); await peer.rpc('screenshot', path.join(screenshots, `${name}.png`)); }
+async function playerFits(peer) {
+  await waitFor(peer, `(() => {
+    const video=document.getElementById('p2p-video'),stage=document.getElementById('watch-video-stage');
+    const box=video.getBoundingClientRect(),bounds=stage.getBoundingClientRect();
+    const scale=Math.min(stage.clientWidth/video.videoWidth,stage.clientHeight/video.videoHeight);
+    return scale>0 && Math.abs(box.width-video.videoWidth*scale)<1 && Math.abs(box.height-video.videoHeight*scale)<1 &&
+      box.left>=bounds.left-1 && box.right<=bounds.right+1 && box.top>=bounds.top-1 && box.bottom<=bounds.bottom+1;
+  })()`);
+}
 (async () => {
   fs.mkdirSync(screenshots, { recursive: true });
   process.env.SELF_LIVE_SMOKE_LANDING = '1';
@@ -74,6 +83,17 @@ async function screenshot(peer, name) { await delay(200); await peer.rpc('screen
   assert.equal(await evaluate(a, `document.getElementById('logging-enabled').checked`), false);
   await click(a, 'logging-enabled');
   await waitFor(a, `document.getElementById('logging-enabled').checked`);
+  assert.equal(await evaluate(a, `document.getElementById('gpu-priority-enabled').checked`),false);
+  await click(a,'gpu-priority-enabled');
+  await waitFor(a, `document.getElementById('gpu-priority-enabled').checked && !document.getElementById('gpu-priority-enabled').disabled`);
+  const priority = await evaluate(a, `window.selfLive.gpuPriorityStatus()`);
+  assert.equal(priority.enabled,true);
+  assert.ok(priority.targets.some(target=>target.type === 'GPU'));
+  await click(a,'gpu-priority-enabled');
+  await waitFor(a, `!document.getElementById('gpu-priority-enabled').checked && !document.getElementById('gpu-priority-enabled').disabled`);
+  assert.equal((await evaluate(a, `window.selfLive.gpuPriorityStatus()`)).state,'disabled');
+  await click(a,'gpu-priority-enabled');
+  await waitFor(a, `document.getElementById('gpu-priority-enabled').checked && !document.getElementById('gpu-priority-enabled').disabled`);
   await screenshot(a, 'landing'); console.log('1. Landing: somente criar/entrar — OK');
   await click(a, 'entry-join');
   assert.ok(await evaluate(a, `document.getElementById('create-panel').hidden && !document.getElementById('join-panel').hidden`));
@@ -150,14 +170,46 @@ async function screenshot(peer, name) { await delay(200); await peer.rpc('screen
   await screenshot(b, 'watching'); console.log('4. Viewer com vídeo recebido — OK');
   assert.ok(await evaluate(b, `document.body.classList.contains('watching-theater') && getComputedStyle(document.querySelector('#view-watching aside')).display === 'none'`));
   assert.ok(await evaluate(b, `document.getElementById('p2p-video').getBoundingClientRect().height > innerHeight * 0.7`));
+  const originalSize=await evaluate(b, `({width:innerWidth,height:innerHeight})`);
+  for (const size of [{width:2200,height:850},{width:800,height:1100}]) {
+    await b.rpc('resize-window',size);
+    await waitFor(b, `innerWidth === ${size.width} && innerHeight === ${size.height}`);
+    await playerFits(b);
+    assert.ok(await evaluate(b, `Math.abs(document.getElementById('watch-player-container').getBoundingClientRect().width-(innerWidth-16))<2`));
+    await screenshot(b,size.width>1000 ? 'watching-wide' : 'watching-tall');
+  }
+  await b.rpc('resize-window',originalSize);await playerFits(b);
+  // Real canvas tracks exercise metadata changes for portrait and ultrawide video.
+  await evaluate(b, `window.smoke.remoteVideoSource=document.getElementById('p2p-video').srcObject`);
+  for (const size of [{width:360,height:640},{width:1200,height:500}]) {
+    await evaluate(b, `(() => {
+      window.smoke.playerTestSource?.getTracks().forEach(track=>track.stop());
+      const canvas=document.createElement('canvas');canvas.width=${size.width};canvas.height=${size.height};
+      window.smoke.playerTestSource=canvas.captureStream(10);
+      document.getElementById('p2p-video').srcObject=window.smoke.playerTestSource;
+      canvas.getContext('2d').fillRect(0,0,canvas.width,canvas.height);
+    })()`);
+    await waitFor(b, `document.getElementById('p2p-video').videoWidth === ${size.width}`);await playerFits(b);
+  }
+  await evaluate(b, `window.smoke.playerTestSource.getTracks().forEach(track=>track.stop());document.getElementById('p2p-video').srcObject=window.smoke.remoteVideoSource`);
+  await waitFor(b, `document.getElementById('p2p-video').videoWidth > document.getElementById('p2p-video').videoHeight`);await playerFits(b);
   const theaterWidth = await evaluate(b, `document.getElementById('p2p-video').getBoundingClientRect().width`);
   await click(b, 'theater-toggle');
+  await playerFits(b);
   assert.ok(await evaluate(b, `!document.body.classList.contains('watching-theater') && document.getElementById('p2p-video').getBoundingClientRect().width < ${theaterWidth}`));
   await screenshot(b, 'watching-panels');
   await click(b, 'fullscreen-toggle');
   await waitFor(b, `document.fullscreenElement?.id === 'watch-player-container'`);
+  await playerFits(b);
+  assert.equal(await evaluate(b, `document.getElementById('fullscreen-toggle').getAttribute('aria-pressed')`),'true');
+  assert.ok(await evaluate(b, `Math.abs(document.getElementById('watch-player-container').getBoundingClientRect().width-innerWidth)<2`));
   await click(b, 'fullscreen-toggle');
   await waitFor(b, `document.fullscreenElement === null`);
+  await playerFits(b);
+  await click(b, 'fullscreen-toggle');await waitFor(b, `document.fullscreenElement !== null`);
+  await evaluate(b, `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`);
+  await waitFor(b, `document.fullscreenElement === null`);
+  assert.equal(await evaluate(b, `document.getElementById('fullscreen-toggle').getAttribute('aria-label')`),'Entrar em tela cheia');
   await click(b, 'theater-toggle');
   console.log('Modo teatro, painéis retráteis e tela cheia — OK');
   await click(b, 'play-pause'); assert.equal(await evaluate(b, `document.getElementById('p2p-video').paused`), true);
@@ -165,6 +217,7 @@ async function screenshot(peer, name) { await delay(200); await peer.rpc('screen
   assert.equal(await evaluate(b, `document.getElementById('p2p-video').muted`), false);
   assert.equal(await evaluate(a, `document.getElementById('logging-indicator').hidden`),false);
   assert.equal(await evaluate(a, `document.getElementById('logging-enabled').disabled`),true);
+  assert.equal(await evaluate(a, `document.getElementById('gpu-priority-enabled').disabled`),true);
   assert.equal(await evaluate(a, `document.getElementById('experimental-fps').disabled`),true);
   await click(a,'adaptive-enabled');
   await waitFor(a, `!document.getElementById('experimental-fps').disabled`);
@@ -181,6 +234,25 @@ async function screenshot(peer, name) { await delay(200); await peer.rpc('screen
   await delay(2200);
   assert.ok(await evaluate(b, `document.getElementById('p2p-video').videoWidth > 0 && window.smoke.connections.at(-1).connectionState === 'connected'`));
   await click(a,'preview-hidden'); await waitFor(a, `document.getElementById('preview')?.videoWidth > 0`);
+  const continuityBefore = await evaluate(a, `({connections:window.smoke.connections.length,
+    captures:window.smoke.captures.length,audio:document.getElementById('preview').srcObject.getAudioTracks()[0].id})`);
+  await a.rpc('capture-state',{kind:'window',available:true,exists:true,focused:false,minimized:true,visible:true});
+  await evaluate(a, `window.smoke.sourceSuspended=true`);
+  await waitFor(a, `document.getElementById('capture-continuity-status').textContent.includes('minimizada')`);
+  await evaluate(a, `(() => { const track=document.getElementById('preview').srcObject.getVideoTracks()[0]; track.stop(); track.dispatchEvent(new Event('ended')); })()`);
+  await delay(2200);
+  assert.equal(await evaluate(a, `window.smoke.captures.length`),continuityBefore.captures);
+  assert.equal(await evaluate(a, `document.body.dataset.view`),'streaming');
+  assert.ok(await evaluate(b, `window.smoke.connections.at(-1).connectionState === 'connected'`));
+  const viewerFrames = await evaluate(b, `document.getElementById('p2p-video').getVideoPlaybackQuality().totalVideoFrames`);
+  await a.rpc('capture-state',{kind:'window',available:true,exists:true,focused:true,minimized:false,visible:true});
+  await evaluate(a, `window.smoke.sourceSuspended=false`);
+  await waitFor(a, `window.smoke.captures.length > ${continuityBefore.captures} && document.getElementById('preview').srcObject.getVideoTracks()[0].readyState === 'live'`);
+  await waitFor(b, `document.getElementById('p2p-video').getVideoPlaybackQuality().totalVideoFrames > ${viewerFrames}`);
+  assert.equal(await evaluate(a, `window.smoke.connections.length`),continuityBefore.connections);
+  assert.equal(await evaluate(a, `document.getElementById('preview').srcObject.getAudioTracks()[0].id`),continuityBefore.audio);
+  assert.equal(await evaluate(a, `document.getElementById('preview').srcObject.getAudioTracks()[0].readyState`),'live');
+  console.log('Alt+Tab/minimização simulados: vídeo recuperado no mesmo peer, áudio e sessão preservados — OK');
   await click(a,'export-diagnostic'); await waitFor(a, `document.getElementById('experiment-feedback').textContent.startsWith('EXPORTADO')`);
   console.log('Controles a quente: preview removido, qualidade/FPS, CPU indisponível, fonte e exportação — OK');
   await click(b, 'stop-watch'); await view(b, 'room'); console.log('5. Parar de assistir retorna à sala — OK');
@@ -188,6 +260,10 @@ async function screenshot(peer, name) { await delay(200); await peer.rpc('screen
   await click(a, 'stop-stream'); await view(a, 'room'); console.log('6. Parar transmissão retorna à sala — OK');
   const audit = await a.rpc('audit');
   assert.equal(audit[0].type,'start'); assert.equal(audit.at(-1).type,'end');
+  assert.equal(audit[0].gpuPriority.enabled,true);
+  assert.ok(audit[0].gpuPriority.targets.some(target=>target.type==='GPU'));
+  assert.ok(audit.some(row=>row.type==='capture-state' && row.captureLifecycle.reason==='minimized'));
+  assert.ok(audit.some(row=>row.type==='capture-state' && row.captureLifecycle.status==='recovering'));
   const encoded = audit.flatMap(record=>record.connections || []).flatMap(connection=>connection.rows).filter(row=>row.type==='outbound-rtp');
   assert.ok(encoded.some(row=>row.encodedFps>0 && row.sendKbps>0 && Number.isFinite(row.encodeMs)), 'O log deve medir envio real entre peers.');
   assert.ok(!JSON.stringify(audit).includes('candidate') && !JSON.stringify(audit).includes('node_id') && !JSON.stringify(audit).includes('password'));

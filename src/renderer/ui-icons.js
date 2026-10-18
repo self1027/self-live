@@ -3,6 +3,7 @@ const paths = {
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5M5 7a8 8 0 0 1 14-1l1 6M4 12l1 6a8 8 0 0 0 14-1"/>',
   fullscreen: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
+  'fullscreen-exit': '<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/>',
   panels: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 4v16"/>',
   play: '<path d="m8 5 11 7-11 7Z"/>', pause: '<path d="M8 5v14M16 5v14"/>',
   check: '<path d="m5 12 4 4L19 6"/>',

@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld('selfLiveBridge', {
   mediaAuditSample: value => ipcRenderer.send('media-audit-sample', value),
   mediaAuditStop: () => ipcRenderer.send('media-audit-stop'),
   diagnosticSettings: () => ipcRenderer.invoke('diagnostic-settings'),
+  gpuPriorityStatus: () => ipcRenderer.invoke('gpu-priority-status'),
+  onGpuPriorityStatus: callback => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('gpu-priority-status', listener);
+    return () => ipcRenderer.removeListener('gpu-priority-status', listener);
+  },
   saveDiagnosticSettings: value => ipcRenderer.invoke('diagnostic-settings-save', value),
   diagnosticSample: value => ipcRenderer.invoke('diagnostic-sample', value),
   diagnosticEvent: value => ipcRenderer.invoke('diagnostic-event', value),
@@ -38,6 +44,9 @@ contextBridge.exposeInMainWorld('selfLiveBridge', {
   },
   generateTurnCredentials: nodeId => ipcRenderer.invoke('generate-turn-credentials', nodeId),
   sources: () => ipcRenderer.invoke('sources'),
+  captureSourceState: () => ipcRenderer.invoke('capture-source-state'),
+  recoverCapture: () => ipcRenderer.invoke('capture-recover'),
+  confirmCaptureSource: id => ipcRenderer.invoke('capture-confirm',id),
   selectSource: (id, audioId) => ipcRenderer.invoke('select-source', id, audioId),
   applicationAudioStart: () => ipcRenderer.invoke('application-audio-start'),
   applicationAudioSources: () => ipcRenderer.invoke('application-audio-sources'),

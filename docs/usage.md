@@ -49,6 +49,10 @@ Clique em **Assistir** num stream disponível para abrir o player. Você pode
 recolher os painéis, usar o modo teatro e entrar em tela cheia. O áudio recebido
 começa mudo; use fones ao ativá-lo para evitar realimentação.
 
+O vídeo acompanha o espaço disponível ao redimensionar a janela, preservando
+as proporções da fonte. O modo teatro usa toda a largura disponível. Em tela
+cheia, use o mesmo botão ou **Esc** para voltar ao tamanho e aos painéis anteriores.
+
 **Parar de assistir** volta à sala. **Parar transmissão** encerra sua captura.
 **Sair** da sala mantém o app aberto. Fechar a janela mantém o processo na bandeja;
 para encerrar tudo, escolha **Sair** no menu da bandeja.

@@ -95,7 +95,10 @@ async function boot(overrides = {}, options = {}) {
   }
   const turn = execute('src/main/turn.js', require);
   const modules = {
-    './diagnostic-settings': { createDiagnosticSettings: () => ({ load:()=>({loggingEnabled:false,adaptiveQuality:true}), save:value=>value }) },
+    './diagnostic-settings': { createDiagnosticSettings: () => ({ load:()=>({loggingEnabled:false,gpuPriorityEnabled:false,adaptiveQuality:true}), save:value=>value }) },
+    './gpu-priority': { createGpuPriority: () => ({ setEnabled:async()=>({enabled:false,state:'disabled'}),
+      snapshot:()=>({enabled:false,state:'disabled'}),refresh:async()=>{} }) },
+    './capture-state': {createCaptureState:()=>({sample:async()=>({available:false})})},
     './media-audit': { createMediaAudit: () => ({ start:()=>({enabled:true}),sample() {},stop() {},setEnabled(){},pauseSampling(){},event(){},exportReport:()=>({samples:0}) }) },
     './share-preferences': { createSharePreferences: () => ({ load: () => ({}), save: value => value }) },
     electron,
@@ -180,16 +183,17 @@ test('handlers TURN/configuração rejeitam outro sender, subframe e origem alte
   for (const name of ['config', 'generate-turn-credentials', 'network-status', 'connectivity',
     'generate-access-link', 'use-access-link', 'pilot-settings', 'pilot-password', 'pilot-save', 'pilot-restart',
     'application-audio-start', 'application-audio-stop', 'application-audio-sources',
-    'diagnostic-settings', 'diagnostic-settings-save', 'diagnostic-sample', 'diagnostic-event', 'diagnostic-export']) {
+    'diagnostic-settings', 'diagnostic-settings-save', 'diagnostic-sample', 'diagnostic-event', 'diagnostic-export',
+    'gpu-priority-status', 'media-audit-start','capture-source-state','capture-recover','capture-confirm']) {
     const invoke = event => f.handlers.get(name)(event, 'peer1');
-    assert.throws(() => invoke({ ...f.trusted, sender: {} }), /IPC não autorizado/);
-    assert.throws(() => invoke({ ...f.trusted, senderFrame: { url: f.trusted.senderFrame.url } }), /IPC não autorizado/);
+    await assert.rejects(async () => invoke({ ...f.trusted, sender: {} }), /IPC não autorizado/);
+    await assert.rejects(async () => invoke({ ...f.trusted, senderFrame: { url: f.trusted.senderFrame.url } }), /IPC não autorizado/);
     const previousUrl = f.trusted.senderFrame.url;
     try {
       f.trusted.senderFrame.url = 'http://127.0.0.1:3000.evil.example/';
-      assert.throws(() => invoke(f.trusted), /IPC não autorizado/);
+      await assert.rejects(async () => invoke(f.trusted), /IPC não autorizado/);
       f.trusted.senderFrame.url = 'https://example.com/';
-      assert.throws(() => invoke(f.trusted), /IPC não autorizado/);
+      await assert.rejects(async () => invoke(f.trusted), /IPC não autorizado/);
     } finally {
       f.trusted.senderFrame.url = previousUrl;
     }

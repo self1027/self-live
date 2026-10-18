@@ -17,14 +17,16 @@ const { createApplicationAudio } = require('./application-audio');
 const { createSharePreferences } = require('./share-preferences');
 const { createMediaAudit } = require('./media-audit');
 const { createDiagnosticSettings } = require('./diagnostic-settings');
+const { createGpuPriority } = require('./gpu-priority');
+const { createCaptureState } = require('./capture-state');
 const { shell } = require('electron');
 
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100');
 // Mantém captura ativa com o dashboard minimizado na bandeja.
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
-let window, servers, tray, connectivity, applicationAudio, mediaAudit, quitting = false;
+let window, servers, tray, connectivity, applicationAudio, mediaAudit, gpuPriority, quitting = false;
 const shutdown = createShutdown({ app, ipcMain, getWindow: () => window, getServers: () => servers,
-  closePorts: () => { applicationAudio?.stop(); return connectivity?.closePorts(); },
+  closePorts: async () => { applicationAudio?.stop(); await Promise.allSettled([gpuPriority?.setEnabled(false), connectivity?.closePorts()]); },
   getTray: () => tray, onStart: () => { quitting = true; mediaAudit?.stop('shutdown'); } });
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
@@ -32,15 +34,23 @@ app.whenReady().then(async () => {
   const pilot = createPilotConfig(app.getPath('userData'), safeStorage);
   const sharePreferences = createSharePreferences(app.getPath('userData'));
   const diagnosticSettings = createDiagnosticSettings(app.getPath('userData'));
-  mediaAudit = createMediaAudit({ app, enabled:diagnosticSettings.load().loggingEnabled });
-  ipcMain.handle('media-audit-start', (event, value) => { trusted(event); return mediaAudit.start(value); });
+  mediaAudit = createMediaAudit({ app, enabled:diagnosticSettings.load().loggingEnabled,
+    gpuPriorityProvider: () => gpuPriority?.snapshot() });
+  gpuPriority = createGpuPriority({ app, onChange: state => {
+    mediaAudit.gpuPriorityChanged(state);
+    if (window && !window.isDestroyed()) window.webContents.send('gpu-priority-status', state);
+  } });
+  await gpuPriority.setEnabled(diagnosticSettings.load().gpuPriorityEnabled);
+  ipcMain.handle('gpu-priority-status', event => { trusted(event); return gpuPriority.snapshot(); });
+  ipcMain.handle('media-audit-start', async (event, value) => { trusted(event); await gpuPriority.refresh(); return mediaAudit.start(value); });
   ipcMain.on('media-audit-sample', (event, value) => { trusted(event); mediaAudit.sample(value); });
   ipcMain.on('media-audit-stop', event => { trusted(event); mediaAudit.stop(); });
   ipcMain.handle('diagnostic-settings', event => { trusted(event); return diagnosticSettings.load(); });
-  ipcMain.handle('diagnostic-settings-save', (event, value) => {
+  ipcMain.handle('diagnostic-settings-save', async (event, value) => {
     trusted(event);
-    if (value?.loggingEnabled !== undefined && isStreaming) throw new Error('Pare a transmissão para alterar.');
+    if ((value?.loggingEnabled !== undefined || value?.gpuPriorityEnabled !== undefined) && isStreaming) throw new Error('Pare a transmissão para alterar.');
     const saved = diagnosticSettings.save(value); mediaAudit.setEnabled(saved.loggingEnabled);
+    if (value?.gpuPriorityEnabled !== undefined) await gpuPriority.setEnabled(saved.gpuPriorityEnabled);
     if (!saved.loggingEnabled && !saved.adaptiveQuality) mediaAudit.pauseSampling();
     return saved;
   });
@@ -199,6 +209,10 @@ app.whenReady().then(async () => {
     return generateTurnCredentials(turn, nodeId);
   });
   ipcMain.handle('sources', event => { trusted(event); return capture.sources(); });
+  const captureState = createCaptureState({app});
+  ipcMain.handle('capture-source-state', event => { trusted(event); return captureState.sample(capture.activeSource()); });
+  ipcMain.handle('capture-recover', event => { trusted(event); capture.recover(); });
+  ipcMain.handle('capture-confirm', (event,id) => { trusted(event); capture.confirm(id); });
   applicationAudio = createApplicationAudio({ app, getWindow: () => window });
   ipcMain.handle('application-audio-sources', event => { trusted(event); return applicationAudio.sources(); });
   ipcMain.handle('select-source', (event, id, audioId) => { trusted(event); capture.select(id, audioId); });
