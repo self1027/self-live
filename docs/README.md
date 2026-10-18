@@ -10,6 +10,7 @@
 | [Piloto portátil](pilot.md) | Build Windows x64, configuração local e teste em dois PCs. |
 | [Áudio por aplicativo](application-audio.md) | Exclusão do Discord, janelas, requisitos Windows e helper nativo. |
 | [Diagnóstico de transmissão](stream-audit.md) | Logs, adaptive, experimentos e contenção de GPU. |
+| [MVP de captura C++](native-mvp.md) | Experimento WGC/D3D11/H.264/WebRTC, somente vídeo e um espectador na LAN. |
 
 ## Desenvolver e operar
 
@@ -30,7 +31,9 @@ alternativas estudadas; o comportamento implementado está no guia de áudio.
 - Captura limitada a 1920 × 1080, com áudio separado por aplicativo.
 - Diagnóstico e adaptive disponíveis; GPU saturada ainda pode causar engasgos.
 - Emissão autenticada de credenciais TURN para distribuição permanece pendente.
-- Sem integração OBS, captura própria DXGI/NVENC/AMF ou atualização automática.
+- A aplicação principal mantém captura Chromium. O MVP separado oferece captura
+  WGC em C++ e encoder de hardware para comparação, sem migração das salas.
+- Sem integração OBS ou atualização automática.
 
 Os exemplos de infraestrutura descrevem configuração e operação; um teste local
 aprovado não garante conectividade entre quaisquer redes.

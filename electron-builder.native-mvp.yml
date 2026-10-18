@@ -1,0 +1,17 @@
+appId: com.selflive.native-mvp
+productName: Self Live Native MVP
+artifactName: Self-Live-Native-MVP-${version}-${arch}.${ext}
+directories:
+  output: dist/native-mvp
+extraMetadata:
+  main: src/native-mvp/main.js
+files:
+  - src/native-mvp/**/*
+  - package.json
+extraResources:
+  - from: native/bin/native-video.exe
+    to: native-mvp/native-video.exe
+  - from: .native-deps/runtime
+    to: native-mvp/gstreamer
+win:
+  target: portable

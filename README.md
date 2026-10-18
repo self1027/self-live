@@ -12,6 +12,9 @@ envie o convite e compartilhe uma tela ou janela com vários espectadores.
 [Como usar](docs/usage.md) · [Executável portátil](docs/pilot.md) ·
 [Diagnóstico](docs/stream-audit.md) · [Documentação](docs/README.md)
 
+Experimento separado: [MVP com captura C++, D3D11 e encoder de hardware](docs/native-mvp.md).
+Execute `npm run start:native-mvp` após preparar/compilar o motor nativo.
+
 > **Estado atual:** piloto fechado com mídia P2P. O relay facilita a entrada na
 > sala, mas redes que exigem TURN ainda dependem de configuração adicional.
 > A emissão de credenciais TURN pela VPS permanece pendente para distribuição.

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'"><title>Self Live — captura C++</title><link rel="stylesheet" href="style.css"></head>
+<body><main class="host">
+  <header><span class="badge">MVP · WINDOWS</span><h1>Teste de captura C++</h1><p>Compartilhe uma janela e compare a fluidez com o jogo sob carga de GPU.</p></header>
+  <section class="card"><div class="row"><h2>O que transmitir</h2><button id="refresh" class="secondary">Atualizar janelas</button></div>
+    <label for="source">Janela</label><select id="source"><option>Carregando motor nativo…</option></select>
+    <div class="grid"><div><label for="adapter">GPU</label><select id="adapter"><option value="-1">Automática — maior memória dedicada</option></select></div>
+      <div><label for="resolution">Resolução máxima</label><select id="resolution"><option value="1080">1080p</option><option value="720">720p</option></select></div>
+      <div><label for="fps">Frames por segundo</label><select id="fps"><option value="60">60 fps</option><option value="30">30 fps</option></select></div>
+      <div><label for="bitrate">Bitrate</label><select id="bitrate"><option value="8000">8 Mbps</option><option value="12000">12 Mbps</option><option value="5000">5 Mbps</option></select></div>
+    </div>
+    <div class="checks"><label><input type="checkbox" id="priority"> usar prioridade de gpu</label><label><input type="checkbox" id="logging" checked> Gravar logs do teste</label></div>
+    <div class="actions"><button id="start" disabled>Iniciar captura</button><button id="stop" class="secondary" disabled>Parar</button><button id="logs" class="secondary">Abrir logs</button></div>
+    <p class="note">Somente vídeo · um espectador · rede local IPv4. Para comparar sob carga, prefira assistir em outro PC.</p>
+  </section>
+  <section class="card"><div class="row"><h2>Espectador</h2><button id="viewer" class="secondary" disabled>Abrir neste PC</button></div>
+    <div class="row"><select id="links" aria-label="Endereço do espectador" disabled><option>Inicie a captura para gerar o convite</option></select><button id="copy" disabled>Copiar link</button></div>
+    <p class="note">Abra o link no Chrome ou Edge do outro PC na mesma rede. O convite muda a cada nova captura.</p>
+  </section>
+  <section class="card"><h2 id="status" role="status">Preparando o motor C++…</h2><p id="details" class="note">Captura WGC e codificação H.264 por hardware.</p>
+    <div class="metrics"><div><strong id="captured">—</strong><span>captura fps</span></div><div><strong id="encoded">—</strong><span>encoder fps</span></div><div><strong id="received">—</strong><span>recebidos fps</span></div><div><strong id="latency">—</strong><span>até encoder p95</span></div></div>
+    <p id="source-state" class="note">Sem transmissão ativa.</p><p id="log-file" class="note"></p>
+  </section>
+</main><script src="host.js"></script></body></html>
