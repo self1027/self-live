@@ -6,7 +6,7 @@ ocupada por um jogo. A referência anterior ao experimento está no commit
 
 ## Executar
 
-Abra `dist/native-mvp-internet/Self-Live-Native-MVP-0.1.0-x64-internet.exe`.
+Abra `dist/native-mvp-internet-turn/Self-Live-Native-MVP-0.1.0-x64-internet-turn.exe`.
 O portátil inclui o motor nativo e o runtime. Para redes diferentes, execute o
 MVP nos dois PCs; na mesma LAN, o espectador também pode usar Chrome ou Edge.
 O MVP tem dados/configuração próprios e fecha a transmissão ao fechar a janela
@@ -52,12 +52,22 @@ candidatos públicos. ICE pode selecionar uma rota IPv4 ou IPv6. Redes com NAT
 restritivo ou bloqueio de UDP podem exigir TURN: STUN sozinho não garante
 conectividade em qualquer combinação de redes.
 
-No **transmissor**, abra **Conectividade e TURN**, preencha URL, usuário e
-credencial TURN e salve antes de capturar. A credencial pode ser temporária,
-gerada pelo administrador do Coturn; **não cole o segredo mestre da VPS**.
-A credencial é protegida com `safeStorage` no perfil Windows, em
-`native-network.json`, e não entra no executável ou nos logs. Deixar o campo
-de credencial vazio preserva a credencial já salva. **Limpar TURN** remove-a.
+No **transmissor**, abra **Conectividade e TURN** e escolha a autenticação:
+
+- **Segredo do Coturn · gerar credenciais automaticamente**: para o administrador
+  da VPS, informe URL e o mesmo segredo `SELF_LIVE_TURN_SECRET` usado na aplicação
+  principal. O MVP usa o gerador da `main` para criar credenciais temporárias
+  distintas, válidas por uma hora, para cada peer. O segredo fica no processo
+  main e não é enviado ao espectador, helper C++ ou relay.
+- **Usuário e credencial TURN**: informe as credenciais de cliente fornecidas
+  pelo administrador. Não cole o segredo mestre nesse campo.
+
+Salve antes de capturar. Os dados sensíveis são protegidos com `safeStorage` no
+perfil Windows, em `native-network.json`, e não entram no executável ou nos
+logs. Deixar o campo de segredo/credencial vazio preserva o valor já salvo,
+desde que servidor, modo e usuário não mudem. **Limpar TURN** remove-o. O modo
+segredo é configuração local do administrador; não distribua esse segredo aos
+outros PCs. Credenciais temporárias não renovam uma sessão ativa automaticamente.
 
 O host envia ao espectador a configuração TURN necessária pela sinalização
 cifrada. **Forçar TURN para testar** usa `iceTransportPolicy: relay` nos dois
@@ -71,8 +81,8 @@ Alternativas de configuração por ambiente, somente no transmissor:
 - `SELF_LIVE_TURN_URL`, `SELF_LIVE_TURN_USERNAME` e `SELF_LIVE_TURN_CREDENTIAL`
   fornecem uma credencial TURN de cliente.
 - O fluxo existente `SELF_LIVE_TURN_URL` + `SELF_LIVE_TURN_SECRET` gera credenciais
-  efêmeras distintas para os peers. O segredo fica no main e nunca é enviado
-  ao espectador. Isso é configuração de administrador; não distribua o segredo
+  efêmeras distintas para os peers, como o modo segredo da interface. O segredo
+  fica no main e nunca é enviado ao espectador. Isso é configuração de administrador; não distribua o segredo
   mestre nem o inclua no portátil.
 - `SELF_LIVE_RELAY_URL` e, para relay privado, `SELF_LIVE_RELAY_FINGERPRINT`
   substituem o sinalizador padrão. Valor vazio de URL desabilita convites de
@@ -183,6 +193,7 @@ npm test
 npm run test:native-mvp
 npm run test:native-internet
 npm run test:native-internet:public
+npm run test:native-turn-settings
 npm run dist:native-mvp
 ```
 
@@ -198,6 +209,10 @@ reconexão do player. Os dois processos de teste rodam nesta máquina; isso não
 substitui testar dois PCs atrás de NATs/operadoras diferentes. O fallback de
 mídia TURN precisa de credenciais válidas para um teste efetivo; somente
 configurar uma URL não comprova que o relay de mídia está funcionando.
+
+O teste de configuração TURN exercita a interface real nos dois modos,
+criptografia do Windows, reinício com o segredo salvo, preservação de campos
+ocultos e remoção. Usa um segredo de teste e não acessa o Coturn da VPS.
 
 O empacotamento copia o conjunto necessário de plugins e suas importações PE,
 o scanner e os avisos do SDK. Não exige instalação global do GStreamer. O modo

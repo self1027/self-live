@@ -40,10 +40,11 @@ app.whenReady().then(async () => {
   const executable = app.isPackaged ? path.join(process.resourcesPath,'native-mvp/native-video.exe') : path.resolve(__dirname,'../../native/bin/native-video.exe');
   if (!fs.existsSync(executable) || !fs.existsSync(path.join(runtime,'bin/gstreamer-1.0-0.dll')))
     throw new Error('Compile o MVP e prepare o SDK: npm run setup:native-mvp e npm run build:native-mvp.');
+  const network=createIceSettings({directory:app.getPath('userData'),storage:safeStorage});
+  delete process.env.SELF_LIVE_TURN_SECRET;
   native = new NativeVideo({executable,runtime,registry:path.join(app.getPath('userData'),'gstreamer-registry.bin')});
   native.on('event',value=>{if(!['offer','ice','peer-state'].includes(value.type))publish(value);});
   native.on('exit',() => publish({type:'error',message:'O motor C++ encerrou. Reinicie o MVP.'}));
-  const network=createIceSettings({directory:app.getPath('userData'),storage:safeStorage});
   server = await createViewerServer({native,onEvent:publish,relayConfig:readRelayConfig(process.env,'native-mvp'),iceProvider:()=>network.configuration()});
   ipcMain.handle('native-mvp-network',event=>{trusted(event);return network.snapshot();});
   ipcMain.handle('native-mvp-network-save',(event,value)=>{trusted(event);if(phase!=='idle')throw new Error('Pare a captura para alterar a rede.');return network.save(value);});

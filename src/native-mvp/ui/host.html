@@ -14,9 +14,11 @@
     <div class="checks"><label><input type="checkbox" id="priority"> usar prioridade de gpu</label><label><input type="checkbox" id="logging" checked> Gravar logs do teste</label></div>
     <div class="actions"><button id="start" disabled>Iniciar captura</button><button id="stop" class="secondary" disabled>Parar</button><button id="logs" class="secondary">Abrir logs</button></div>
     <p class="note">Somente vídeo · um espectador · P2P pela internet ou rede local.</p>
-    <details id="network-options"><summary>Conectividade e TURN</summary><p class="note">STUN já está ativo. Configure TURN se a conexão direta falhar. Use usuário e credencial TURN; o segredo principal da VPS permanece no servidor.</p>
+    <details id="network-options"><summary>Conectividade e TURN</summary><p class="note">STUN já está ativo. Configure TURN se a conexão direta falhar. Escolha como autenticar no seu servidor.</p>
       <label for="turn-url">Servidor TURN</label><input id="turn-url" type="text" placeholder="turn:servidor:3478?transport=udp" autocomplete="off" spellcheck="false">
-      <div class="grid"><div><label for="turn-user">Usuário</label><input id="turn-user" type="text" autocomplete="off" spellcheck="false"></div><div><label for="turn-password">Credencial</label><input id="turn-password" type="password" autocomplete="new-password"></div></div>
+      <label for="turn-auth">Autenticação</label><select id="turn-auth"><option value="secret">Segredo do Coturn · gerar credenciais automaticamente</option><option value="credentials">Usuário e credencial TURN</option></select>
+      <div id="turn-secret-fields"><label for="turn-secret">Segredo compartilhado do Coturn</label><input id="turn-secret" type="password" autocomplete="new-password"><p class="note">Para o administrador da VPS: use o valor de SELF_LIVE_TURN_SECRET. Ele fica protegido neste PC. Somente credenciais temporárias são enviadas ao espectador.</p></div>
+      <div id="turn-credential-fields" class="grid" hidden><div><label for="turn-user">Usuário</label><input id="turn-user" type="text" autocomplete="off" spellcheck="false"></div><div><label for="turn-password">Credencial</label><input id="turn-password" type="password" autocomplete="new-password"></div></div>
       <label class="checks"><input id="force-relay" type="checkbox"> Forçar TURN para testar</label><div class="actions"><button id="save-network" class="secondary">Salvar rede</button><button id="clear-turn" class="secondary">Limpar TURN</button></div><p id="turn-status" class="note"></p>
     </details>
   </section>

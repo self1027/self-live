@@ -2,7 +2,7 @@ const { app, BrowserWindow } = require('electron');
 const childProcess = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const profile=path.join(require('node:os').tmpdir(),`self-live-native-profile-${process.pid}`);
+const profile=process.env.SELF_LIVE_MVP_TEST_PROFILE || path.join(require('node:os').tmpdir(),`self-live-native-profile-${process.pid}`);
 fs.mkdirSync(path.join(profile,'SelfLive-NativeMVP'),{recursive:true});
 fs.mkdirSync(path.join(profile,'Documents'),{recursive:true});
 const originalGetPath=app.getPath.bind(app);

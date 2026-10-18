@@ -37,6 +37,7 @@
     "test:native-mvp": "node --test test/native-mvp.test.js test/native-internet.test.js && node scripts/run-native-mvp-smoke.js",
     "test:native-internet": "node --test test/native-internet.test.js && node scripts/run-native-internet-smoke.js",
     "test:native-internet:public": "node scripts/run-native-internet-smoke.js --public",
+    "test:native-turn-settings": "node --test test/native-internet.test.js && node scripts/run-native-turn-settings-smoke.js",
     "dist:native-mvp": "npm run build:native-mvp && node scripts/stage-native-mvp.js && electron-builder --config electron-builder.native-mvp.yml --win portable --x64"
   },
   "dependencies": {

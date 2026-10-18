@@ -1,0 +1,44 @@
+const assert = require('node:assert/strict');
+const { once } = require('node:events');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { launch, waitFor, click, cleanup } = require('./run-native-mvp-smoke');
+
+(async () => {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(),'self-live-native-turn-settings-'));
+  const overrides = {SELF_LIVE_MVP_TEST_PROFILE:profile,SELF_LIVE_RELAY_URL:'',SELF_LIVE_TURN_URL:'',SELF_LIVE_TURN_SECRET:'',SELF_LIVE_TURN_USERNAME:'',SELF_LIVE_TURN_CREDENTIAL:'',SELF_LIVE_FORCE_RELAY:''};
+  let peer = await launch(overrides);
+  await waitFor(peer,`document.getElementById('turn-status').textContent.includes('STUN ativo')`);
+  await waitFor(peer,`!document.getElementById('save-network').disabled`);
+  assert.equal(await peer.rpc('evaluate',`document.getElementById('turn-auth').value`),'secret');
+  assert.equal(await peer.rpc('evaluate',`getComputedStyle(document.getElementById('turn-credential-fields')).display`),'none');
+  await peer.rpc('evaluate',`document.getElementById('turn-url').value='turn:example.com:3478?transport=udp';document.getElementById('turn-secret').value='smoke-only-coturn-secret';document.getElementById('force-relay').checked=true`);
+  await click(peer,'save-network');
+  await waitFor(peer,`document.getElementById('turn-status').textContent.includes('automaticamente')`);
+  assert.equal(await peer.rpc('evaluate',`document.getElementById('turn-secret').value`),'');
+  const configFile = path.join(profile,'SelfLive-NativeMVP/native-network.json');
+  const stored = fs.readFileSync(configFile,'utf8');
+  assert.ok(JSON.parse(stored).encryptedSecret);assert.ok(!stored.includes('smoke-only-coturn-secret'));
+  const closed = once(peer.child,'exit');await peer.rpc('quit');await closed;
+
+  peer = await launch(overrides);
+  await waitFor(peer,`document.getElementById('turn-status').textContent.includes('automaticamente')`);
+  const snapshot = await peer.rpc('evaluate',`window.nativeMvp.network()`);
+  await waitFor(peer,`!document.getElementById('save-network').disabled`);
+  assert.equal(snapshot.turnAuth,'secret');assert.equal(snapshot.hasCredential,true);assert.equal(snapshot.forceRelay,true);
+  assert.ok(!JSON.stringify(snapshot).includes('smoke-only-coturn-secret'));
+  await peer.rpc('evaluate',`document.getElementById('force-relay').checked=false`);
+  await click(peer,'save-network');
+  await waitFor(peer,`document.getElementById('turn-secret').placeholder.includes('Já configurado')`);
+  await click(peer,'clear-turn');await waitFor(peer,`document.getElementById('turn-status').textContent.includes('STUN ativo')`);
+  await peer.rpc('evaluate',`document.getElementById('turn-auth').value='credentials';document.getElementById('turn-auth').dispatchEvent(new Event('change'));document.getElementById('turn-url').value='turn:example.com:3478';document.getElementById('turn-user').value='smoke-user';document.getElementById('turn-password').value='smoke-only-credential'`);
+  assert.equal(await peer.rpc('evaluate',`getComputedStyle(document.getElementById('turn-secret-fields')).display`),'none');
+  assert.notEqual(await peer.rpc('evaluate',`getComputedStyle(document.getElementById('turn-credential-fields')).display`),'none');
+  await click(peer,'save-network');
+  await waitFor(peer,`document.getElementById('turn-status').textContent==='TURN configurado.'`);
+  assert.equal(await peer.rpc('evaluate',`document.getElementById('turn-password').value`),'');
+  await click(peer,'clear-turn');await waitFor(peer,`document.getElementById('turn-status').textContent.includes('STUN ativo')`);
+  const finished = once(peer.child,'exit');await peer.rpc('quit');await finished;
+  console.log('TURN settings UI: secret/credential modes, Windows encryption, restart, blank preservation and clearing OK.');
+})().catch(error=>{console.error(error);process.exitCode=1;}).finally(cleanup);

@@ -1,8 +1,8 @@
 appId: com.selflive.native-mvp
 productName: Self Live Native MVP
-artifactName: Self-Live-Native-MVP-${version}-${arch}-internet.${ext}
+artifactName: Self-Live-Native-MVP-${version}-${arch}-internet-turn.${ext}
 directories:
-  output: dist/native-mvp-internet
+  output: dist/native-mvp-internet-turn
 extraMetadata:
   main: src/native-mvp/main.js
 files:

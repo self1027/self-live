@@ -4,7 +4,7 @@ const {EventEmitter,once}=require('node:events');
 const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
-const {X509Certificate}=require('node:crypto');
+const {X509Certificate,createHmac}=require('node:crypto');
 const selfsigned=require('selfsigned');
 const {WebSocket}=require('ws');
 const {startRelay}=require('../relay/server');
@@ -12,6 +12,7 @@ const {createViewerServer}=require('../src/native-mvp/server');
 const {decodeInvitation}=require('../src/native-mvp/internet');
 const {createIceSettings,nativeIceConfiguration}=require('../src/native-mvp/ice-config');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const encryptedStorage={isEncryptionAvailable:()=>true,encryptString:value=>Buffer.from(value).map(byte=>byte^0xa5),decryptString:value=>Buffer.from(value).map(byte=>byte^0xa5).toString()};
 async function until(check){for(let i=0;i<300;i++){if(check())return;await delay(10);}throw new Error('Timeout aguardando sinalizacao.');}
 test('native ICE converts TURN credentials without losing timestamp, base64 or IPv6',()=>{
   const result=nativeIceConfiguration({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:['turn:example.com:3478?transport=tcp','turns:[2001:db8::1]:5349?transport=tcp'],username:'1899000000:viewer',credential:'a+b/c='}],iceTransportPolicy:'relay'});
@@ -36,6 +37,34 @@ test('TURN settings encrypt local credentials, preserve hidden passwords and nev
   const ephemeral=rest.configuration().iceServers[1];assert.match(ephemeral.username,/^\d+:/);assert.notEqual(ephemeral.credential,'server-only-master');
   assert.ok(!JSON.stringify(rest.snapshot()).includes('server-only-master'));
 });
+test('Coturn secret mode persists encrypted, generates distinct temporary credentials and preserves blank secrets',()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'native-network-secret-'));
+  const secret='test-only-coturn-shared-secret',urls='turn:example.com:3478?transport=udp';
+  const settings=createIceSettings({directory,storage:encryptedStorage,env:{}});
+  assert.throws(()=>settings.save({turnAuth:'secret',turnUrl:urls,forceRelay:false}),/segredo/);
+  assert.throws(()=>settings.save({turnAuth:'unsupported',forceRelay:false}),/Modo/);
+  const snapshot=settings.save({turnAuth:'secret',turnUrl:urls,turnSecret:secret,forceRelay:true});
+  assert.equal(snapshot.turnAuth,'secret');assert.equal(snapshot.turnUsername,'');assert.equal(snapshot.hasCredential,true);
+  assert.ok(!JSON.stringify(snapshot).includes(secret));assert.equal(snapshot.environmentCredentials,false);
+  const saved=fs.readFileSync(path.join(directory,'native-network.json'),'utf8');
+  assert.ok(JSON.parse(saved).encryptedSecret);assert.ok(!saved.includes(secret));assert.equal(JSON.parse(saved).encrypted,null);
+  const loaded=createIceSettings({directory,storage:encryptedStorage,env:{}});
+  const first=loaded.configuration(),second=loaded.configuration();
+  assert.equal(first.iceTransportPolicy,'relay');assert.notEqual(first.iceServers[1].username,second.iceServers[1].username);
+  assert.equal(first.iceServers[1].credential,createHmac('sha1',secret).update(first.iceServers[1].username).digest('base64'));
+  assert.deepEqual(Object.keys(first.iceServers[1]).sort(),['credential','urls','username']);
+  assert.ok(!JSON.stringify(first).includes(secret));assert.ok(!JSON.stringify(nativeIceConfiguration(first)).includes(secret));
+  loaded.save({turnAuth:'secret',turnUrl:urls,turnSecret:'',forceRelay:false});
+  assert.equal(loaded.configuration().iceTransportPolicy,'all');
+  assert.throws(()=>loaded.save({turnAuth:'secret',turnUrl:'turn:other.example:3478',turnSecret:'',forceRelay:false}),/segredo/);
+  assert.throws(()=>loaded.save({turnAuth:'secret',turnUrl:urls,turnSecret:'\ninvalid',forceRelay:false}),/segredo/);
+  assert.throws(()=>loaded.save({turnAuth:'credentials',turnUrl:urls,forceRelay:false}),/credencial/);
+  loaded.save({clear:true,forceRelay:false});assert.equal(loaded.configuration().iceServers.length,1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(directory,'native-network.json'),'utf8')).encryptedSecret,null);
+  const protectedSettings=createIceSettings({directory,storage:{...encryptedStorage,isEncryptionAvailable:()=>false},env:{}});
+  assert.throws(()=>protectedSettings.save({turnAuth:'secret',turnUrl:urls,turnSecret:secret,forceRelay:false}),/Protecao/);
+});
+
 test('internet invitation bridges encrypted WSS signaling to native WebRTC without contacting the host HTTP endpoint',async t=>{
   const certificate=await selfsigned.generate([{name:'commonName',value:'localhost'}],{keySize:2048,days:1});
   const relay=await startRelay({key:certificate.private,cert:certificate.cert,port:0,host:'127.0.0.1',log(){}});
@@ -47,7 +76,10 @@ test('internet invitation bridges encrypted WSS signaling to native WebRTC witho
     return {};
   };
   const unused=new EventEmitter();unused.request=async()=>{throw new Error('Receiver must not start native capture.');};
-  const host=await createViewerServer({native,onEvent:value=>events.push(value),addresses:[],bind:'127.0.0.1',relayConfig:{url:`wss://127.0.0.1:${relay.port}`,fingerprint}});
+  const secret='integration-only-coturn-secret';
+  const network=createIceSettings({directory:fs.mkdtempSync(path.join(os.tmpdir(),'native-network-relay-')),storage:encryptedStorage,env:{}});
+  network.save({turnAuth:'secret',turnUrl:'turn:example.com:3478',turnSecret:secret,forceRelay:true});
+  const host=await createViewerServer({native,onEvent:value=>events.push(value),addresses:[],bind:'127.0.0.1',relayConfig:{url:`wss://127.0.0.1:${relay.port}`,fingerprint},iceProvider:()=>network.configuration()});
   const receiver=await createViewerServer({native:unused,addresses:[],bind:'127.0.0.1'});
   const clients=[];t.after(async()=>{for(const client of clients)client.terminate();await receiver.close();await host.close();await relay.close();});
   const info=host.activate();assert.ok(info.internet.startsWith('selflive-native://join/'));
@@ -67,6 +99,12 @@ test('internet invitation bridges encrypted WSS signaling to native WebRTC witho
   await until(()=>operations.some(value=>value.op==='answer')&&operations.some(value=>value.op==='ice'));
   assert.equal(operations.find(value=>value.op==='answer').fields.sdp,'viewer-answer');
   assert.equal(operations.find(value=>value.op==='connect').fields.stunServer,'stun://stun.l.google.com:19302');
+  const receiverTurn=received.find(value=>value.type==='connecting').iceServers[1];
+  assert.equal(receiverTurn.credential,createHmac('sha1',secret).update(receiverTurn.username).digest('base64'));
+  const senderIce=operations.find(value=>value.op==='connect').fields;
+  assert.equal(senderIce.relayOnly,true);assert.equal(senderIce.turnServers.length,1);
+  assert.ok(!senderIce.turnServers[0].includes(encodeURIComponent(receiverTurn.username)));
+  assert.ok(!JSON.stringify({received,operations,events}).includes(secret));
   assert.ok(events.some(value=>value.type==='viewer-connected'));
   const closed=new Promise(resolve=>client.once('close',resolve));host.deactivate();await closed;
   await until(()=>operations.some(value=>value.op==='disconnect'));

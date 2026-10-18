@@ -2,7 +2,7 @@ const bridge = window.nativeMvp;
 const byId = id => document.getElementById(id);
 let active = false, busy = false;
 function controls() {
-  for (const id of ['source','adapter','resolution','fps','bitrate','priority','logging','refresh','turn-url','turn-user','turn-password','force-relay','save-network','clear-turn']) byId(id).disabled = active || busy;
+  for (const id of ['source','adapter','resolution','fps','bitrate','priority','logging','refresh','turn-url','turn-auth','turn-secret','turn-user','turn-password','force-relay','save-network','clear-turn']) byId(id).disabled = active || busy;
   byId('start').disabled = active || busy || !/^\d+$/.test(byId('source').value);
   byId('stop').disabled = !active || busy;
   for (const id of ['viewer','links','copy']) byId(id).disabled = !active || busy;
@@ -67,16 +67,25 @@ byId('join').onclick=async()=>{
   catch(error){byId('join-status').textContent=error.message;}
   finally{byId('join').disabled=false;}
 };
+let savedNetwork;
+function authentication() {
+  const secret=byId('turn-auth').value==='secret';
+  byId('turn-secret-fields').hidden=!secret;byId('turn-credential-fields').hidden=secret;
+  byId('turn-secret').placeholder=savedNetwork?.hasCredential&&savedNetwork.turnAuth==='secret'?'Já configurado; deixe em branco para manter':'';
+  byId('turn-password').placeholder=savedNetwork?.hasCredential&&savedNetwork.turnAuth==='credentials'?'Já configurada; deixe em branco para manter':'';
+}
 function network(value) {
-  byId('turn-url').value=value.turnUrl;byId('turn-user').value=value.turnUsername;byId('turn-password').value='';
-  byId('turn-password').placeholder=value.hasCredential?'Já configurada; deixe em branco para manter':'';
+  savedNetwork=value;
+  byId('turn-url').value=value.turnUrl;byId('turn-user').value=value.turnUsername;byId('turn-password').value='';byId('turn-secret').value='';
+  byId('turn-auth').value=value.turnAuth;authentication();
   byId('force-relay').checked=value.forceRelay;
-  byId('turn-status').textContent=value.hasCredential?`TURN configurado${value.environmentCredentials?' pelo ambiente':''}.`:'STUN ativo; TURN não configurado.';
+  byId('turn-status').textContent=value.hasCredential?`TURN configurado${value.environmentCredentials?' pelo ambiente':''}${value.turnAuth==='secret'?'; credenciais temporárias geradas automaticamente':''}.`:'STUN ativo; TURN não configurado.';
 }
 async function saveNetwork(clear=false) {
-  try {network(await bridge.saveNetwork({turnUrl:byId('turn-url').value,turnUsername:byId('turn-user').value,turnCredential:byId('turn-password').value,forceRelay:clear?false:byId('force-relay').checked,clear}));}
+  try {network(await bridge.saveNetwork({turnUrl:byId('turn-url').value,turnAuth:byId('turn-auth').value,turnSecret:byId('turn-secret').value,turnUsername:byId('turn-user').value,turnCredential:byId('turn-password').value,forceRelay:clear?false:byId('force-relay').checked,clear}));}
   catch(error){byId('turn-status').textContent=error.message;}
 }
 byId('save-network').onclick=()=>saveNetwork();byId('clear-turn').onclick=()=>saveNetwork(true);
+byId('turn-auth').onchange=()=>{byId('turn-secret').value='';byId('turn-password').value='';authentication();};
 bridge.network().then(network).catch(error=>{byId('turn-status').textContent=error.message;});
 void refresh();
