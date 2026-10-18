@@ -24,6 +24,8 @@ function loadConnectivity({ publicIp = '8.8.8.8', wanIp = publicIp, wanReady } =
       state = { tcp: null, udp: null, method: null, status: options.mode === 'off' ? 'disabled' : 'checking' };
       return {
         getStatus: () => structuredClone(state),
+        getMappedUdp: () => state.status === 'mapped' ? { internalHost: '192.168.1.5', externalHost: wanIp,
+          ports: [{ internalPort: 50000, externalPort: 50000 }] } : null,
         openPorts(args) {
           calls.open.push(args);
           return mapReady.promise.then(result => {
@@ -187,5 +189,19 @@ test('configuração aceita on/off/auto e TTL dentro dos limites; rejeita valore
   for (const mode of ['ON', 'disabled', ' auto ']) assert.throws(() => readPortMappingConfig({ SELF_LIVE_UPNP: mode }), /SELF_LIVE_UPNP/);
   for (const ttl of ['1199', '86401', '-1', '1200.5', 'abc', 'Infinity']) {
     assert.throws(() => readPortMappingConfig({ SELF_LIVE_UPNP_TTL: ttl }), /SELF_LIVE_UPNP_TTL/);
+  }
+});
+
+test('private UDP lease is usable only after WAN matches the public observation and before shutdown', async () => {
+  for (const [wanIp, publicIp, available] of [['8.8.8.8', '8.8.8.8', true], ['100.64.1.10', '8.8.8.8', false], [null, null, false]]) {
+    const module = loadConnectivity({ wanIp, publicIp });
+    const { connectivity, updates } = instance(module);
+    const started = connectivity.start();
+    assert.equal(connectivity.getMappedUdp(), null);
+    module.mapReady.resolve(mapped); await started;
+    assert.equal(Boolean(connectivity.getMappedUdp()), available);
+    assert.doesNotMatch(JSON.stringify(updates), /192\.168\.1\.5|8\.8\.8\.8|100\.64\.1\.10/);
+    await connectivity.closePorts();
+    assert.equal(connectivity.getMappedUdp(), null);
   }
 });

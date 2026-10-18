@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Self Live — espectador MVP</title><link rel="stylesheet" href="style.css"></head>
-<body class="viewer"><header class="viewer-bar"><div><strong>Self Live · C++ MVP</strong><span id="status" role="status">Conectando…</span></div><button id="fullscreen" class="secondary">Tela cheia</button></header>
-<main id="stage"><video id="video" autoplay playsinline muted></video><div id="waiting">Aguardando vídeo da janela compartilhada</div></main>
-<footer><span id="metrics">Somente vídeo · teste de fluidez</span><button id="reconnect" class="secondary">Reconectar</button></footer><script src="viewer.js"></script></body></html>
+<body class="viewer"><header class="viewer-bar"><div><strong>Self Live <span class="viewer-title">· Recebendo transmissão</span></strong><span id="status" role="status">Conectando automaticamente…</span></div><button id="fullscreen" class="secondary">Tela cheia</button></header>
+<div class="connection-summary"><span id="signal-path">Sinalização: conectando</span><span id="media-path">Mídia: aguardando negociação</span></div>
+<main id="stage"><video id="video" autoplay playsinline muted tabindex="0" aria-label="Vídeo compartilhado; clique ou pressione espaço para reproduzir"></video><div id="waiting" role="status"><strong>Aguardando o vídeo</strong>O Self Live tenta as rotas disponíveis e negocia a mídia com preferência por P2P.</div></main>
+<footer><span id="metrics">Somente vídeo · H.264 por hardware no transmissor</span><button id="reconnect" class="secondary">Reconectar</button></footer><script src="viewer.js"></script></body></html>

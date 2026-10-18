@@ -148,4 +148,4 @@ function decodeAccessLink(link) {
   return validatePayload(payload);
 }
 
-module.exports = { buildAccessEndpoints, encodeAccessLink, decodeAccessLink };
+module.exports = { buildAccessEndpoints, encodeAccessLink, decodeAccessLink, validateEndpoint };

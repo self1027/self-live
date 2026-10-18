@@ -6,7 +6,7 @@ ocupada por um jogo. A referência anterior ao experimento está no commit
 
 ## Executar
 
-Abra `dist/native-mvp-internet-turn/Self-Live-Native-MVP-0.1.0-x64-internet-turn.exe`.
+Abra `dist/native-mvp-automatic/Self-Live-Native-MVP-0.1.0-x64-automatic.exe`.
 O portátil inclui o motor nativo e o runtime. Para redes diferentes, execute o
 MVP nos dois PCs; na mesma LAN, o espectador também pode usar Chrome ou Edge.
 O MVP tem dados/configuração próprios e fecha a transmissão ao fechar a janela
@@ -15,12 +15,11 @@ principal. O executável anterior permanece disponível para comparação.
 1. Abra/restaure a janela do jogo.
 2. Selecione a janela, a GPU e 1080p/60 ou 720p/60. A captura preserva proporções,
    respeita o limite de 1920 × 1080 e não amplia fontes menores.
-3. Mantenha **Gravar logs do teste** ligado e clique em **Iniciar captura**.
-4. Escolha **Internet · convite para outro MVP**, copie o convite e envie-o ao
-   espectador. No outro PC, cole em **Assistir a outro PC** e clique em
-   **Assistir**. O sinalizador público é acessado por conexão WSS de saída;
-   o espectador não precisa alcançar o IP/servidor HTTP local do transmissor.
-   Para a mesma LAN, escolha **Rede local** e abra o link no navegador.
+3. Mantenha **Gravar logs de captura e recepção** ligado e clique em **Iniciar captura**.
+4. Copie o **Convite automático** e envie-o ao espectador. No outro PC, cole em
+   **Receber uma transmissão** e clique em **Assistir**. Não é necessário
+   preencher TURN para tentar as rotas disponíveis. Para a mesma LAN, o link
+   **Rede local** também abre no navegador.
    **Abrir neste PC** também funciona, acrescentando decodificação no transmissor.
 5. Para outra tentativa, pare a captura, altere os parâmetros e inicie novamente.
    Cada início gera um convite novo; o antigo perde a validade.
@@ -35,8 +34,31 @@ Não inclui áudio, captura de monitor, game hook nem adaptive. O convite autori
 assistir à captura atual e não dá acesso aos controles do host. O player informa
 **P2P direto** ou **via TURN**, a partir do par ICE realmente selecionado.
 
-Se o Windows solicitar acesso à rede, o acesso à rede privada permite o teste
-entre os dois PCs. Não há configuração automática de firewall ou roteador.
+Se o Windows solicitar acesso à rede, permita o acesso na rede em que fará o
+teste. O MVP tenta mapear portas no roteador por PCP, NAT-PMP e UPnP, como a
+`main`, com renovação e remoção dos leases ao encerrar. Não altera regras do
+firewall do Windows. CGNAT e políticas do roteador podem impedir o mapeamento.
+
+## Conexão automática
+
+O convite contém as alternativas disponíveis no momento da cópia. O receptor
+tenta sinalização WSS por IPv6 global, IPv4 público/mapeado, relay público e
+endereços locais, seguindo as prioridades da `main`. Cada tentativa dispõe de
+cinco segundos para conectar e concluir o handshake. Uma falha avança para a
+próxima rota; autenticação inválida e transmissor ocupado encerram a tentativa.
+O token só é enviado ao WSS direto depois de verificar o certificado pelo
+fingerprint do convite. O navegador recebe apenas uma ponte de loopback local.
+
+A faixa UDP é aplicada ao helper C++ e ao WebRTC do receptor antes da negociação.
+Candidatos de mapeamento usam apenas sockets e leases reais do processo, sem
+anunciar endereços públicos quando a observação da rede indica CGNAT. A captura
+e a codificação continuam no caminho nativo, sem processamento de pixels em JS.
+
+**Sinalização** e **Mídia** têm indicadores separados: usar o relay WSS para
+encontrar o transmissor permite manter o vídeo P2P. O relay não é um servidor
+TURN. Convites antigos do MVP continuam aceitos; convites da aplicação `main`
+usam outro protocolo e recebem uma mensagem específica. Use o novo portátil
+nos dois PCs e um convite da captura atual para testar esta versão.
 
 ## Internet, STUN e TURN
 
@@ -52,7 +74,8 @@ candidatos públicos. ICE pode selecionar uma rota IPv4 ou IPv6. Redes com NAT
 restritivo ou bloqueio de UDP podem exigir TURN: STUN sozinho não garante
 conectividade em qualquer combinação de redes.
 
-No **transmissor**, abra **Conectividade e TURN** e escolha a autenticação:
+Quando houver um serviço TURN, no **transmissor**, abra **Opções avançadas de
+rede · TURN opcional** e escolha a autenticação:
 
 - **Segredo do Coturn · gerar credenciais automaticamente**: para o administrador
   da VPS, informe URL e o mesmo segredo `SELF_LIVE_TURN_SECRET` usado na aplicação
@@ -85,8 +108,11 @@ Alternativas de configuração por ambiente, somente no transmissor:
   fica no main e nunca é enviado ao espectador. Isso é configuração de administrador; não distribua o segredo
   mestre nem o inclua no portátil.
 - `SELF_LIVE_RELAY_URL` e, para relay privado, `SELF_LIVE_RELAY_FINGERPRINT`
-  substituem o sinalizador padrão. Valor vazio de URL desabilita convites de
-  internet. TLS exige CA válida ou o pin explícito recebido no convite.
+  substituem o sinalizador padrão. Valor vazio de URL desabilita essa alternativa;
+  convites com rotas diretas continuam possíveis. TLS exige CA válida ou o pin
+  explícito recebido no convite.
+- `SELF_LIVE_UPNP=off` desabilita o mapeamento de portas; a descoberta de rotas
+  e os demais caminhos continuam disponíveis.
 
 Credenciais TURN não vêm pré-configuradas. O servidor de sinalização existente
 não emite credenciais TURN. Consulte [o guia Coturn](turn-setup.md) para a
@@ -146,6 +172,8 @@ antes que o encoder termine; este experimento não promete zero-copy.
 
 Use **Abrir logs**. Diretório: `Documentos/SelfLive-NativeMVP-Logs`;
 arquivos `native-mvp-*.jsonl`, partes de até 10 MiB. O MVP não remove logs antigos.
+O checkbox controla também os logs locais do receptor, inclusive erros antes de
+receber vídeo. `start.role` distingue `sender` de `receiver`.
 
 - `start`: configuração, encoder, GPU e LUID; não inclui título/handle da janela.
 - `sample`: frames WGC recebidos, submetidos e codificados; FPS por etapa;
@@ -164,6 +192,12 @@ arquivos `native-mvp-*.jsonl`, partes de até 10 MiB. O MVP não remove logs ant
 - `ice-candidates`: contagem por tipo `host`, `srflx`, `prflx`, `relay` do helper
   nativo, sem registrar os candidatos ou IPs.
 - `peer-state` e `signaling-status`: estados de mídia e sinalização separados.
+- `connection-stage`: rota tentada, registro no relay, localização do host,
+  handshake e início da mídia. Códigos seguros distinguem `dns_failed`,
+  `tls_failed`, `tls_pin_mismatch`, `relay_unavailable`, `host_unavailable`,
+  `handshake_timeout`, `incompatible_invitation` e `expired_invitation`.
+  Falha ao localizar o transmissor não comprova falta de TURN.
+- `port-mapping`: estado, método e motivo do mapeamento, sem endereços ou portas.
 - `source-resize`, conexão/desconexão e encerramento completam a sequência.
 
 `explicitCpuReadbacks: 0` conta somente operações explícitas do nosso código;
@@ -191,6 +225,7 @@ do Visual Studio. `.native-deps` e `native/bin` não são versionados.
 npm run check
 npm test
 npm run test:native-mvp
+npm run test:native-automatic
 npm run test:native-internet
 npm run test:native-internet:public
 npm run test:native-turn-settings
@@ -203,9 +238,13 @@ restaurar, resize, reconexão e encerramento do helper. Não usa captura simulad
 do Chromium. É validação funcional; desempenho em jogo sob saturação exige o
 teste comparativo descrito acima.
 
-O teste de internet usa duas instâncias e sinalização por relay TLS. A opção
-`:public` usa o WSS público, verifica decodificação real, candidatos STUN e
-reconexão do player. Os dois processos de teste rodam nesta máquina; isso não
+O teste de internet usa duas instâncias e sinalização por relay TLS. O comando
+`test:native-automatic` verifica seleção de rotas, a interface, logs de recepção
+e vídeo real por WSS direto. `test:native-internet:public` injeta uma rota direta
+com certificado incorreto e verifica o fallback automático para o WSS público,
+decodificação real, candidatos STUN e reconexão do player. Os smokes desabilitam
+mapeamento no roteador para serem repetíveis; leases e CGNAT têm testes
+determinísticos separados. Os dois processos de vídeo rodam nesta máquina; isso não
 substitui testar dois PCs atrás de NATs/operadoras diferentes. O fallback de
 mídia TURN precisa de credenciais válidas para um teste efetivo; somente
 configurar uma URL não comprova que o relay de mídia está funcionando.

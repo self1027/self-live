@@ -211,6 +211,15 @@ function createPortMapper({ mode = 'on', onUpdate = () => {}, log = console, dep
   const operations = new Set();
 
   const getStatus = () => structuredClone(state);
+  // Process-private socket metadata; never include these addresses in status/IPC.
+  function getMappedUdp() {
+    if (stopped || state.status !== 'mapped' || !active || active.retiring) return null;
+    const entries = active.entries.filter(entry => entry.protocol === 'udp');
+    if (!entries.length || entries.some(entry => !isIPv4(entry.externalHost) || entry.expiresAt <= Date.now()) ||
+        entries.some(entry => entry.externalHost !== entries[0].externalHost)) return null;
+    return { internalHost: active.route.address, externalHost: entries[0].externalHost,
+      ports: entries.map(entry => ({ internalPort: entry.port, externalPort: entry.externalPort })) };
+  }
   function update(next) {
     state = { ...next };
     try { onUpdate(getStatus()); } catch { /* UI subscribers cannot break cleanup */ }
@@ -243,6 +252,7 @@ function createPortMapper({ mode = 'on', onUpdate = () => {}, log = console, dep
   }
   async function cleanup(attempt) {
     if (!attempt?.gateway) return;
+    attempt.retiring = true;
     await bounded(async signal => {
       const settled = await Promise.allSettled(attempt.entries.map(entry => attempt.gateway.unmap(entry.port, {
         protocol: entry.protocol, externalPort: entry.externalPort || entry.port,
@@ -268,8 +278,11 @@ function createPortMapper({ mode = 'on', onUpdate = () => {}, log = console, dep
           // upstream TypeScript annotation. UPnP adapter/PCP also accept seconds.
           const tracked = { ...entry, externalPort: entry.port };
           attempt.entries.push(tracked);
+          const requestedAt = Date.now();
           const mapping = await attempt.gateway.map(entry.port, route.address, options);
           tracked.externalPort = mapping.externalPort;
+          tracked.externalHost = mapping.externalHost;
+          tracked.expiresAt = requestedAt + (Number.isFinite(mapping.lifetime) ? mapping.lifetime : ttl) * 1000;
           if (stopped || signal.aborted) {
             await cleanup(attempt);
             throw failure('ABORTED');
@@ -310,12 +323,15 @@ function createPortMapper({ mode = 'on', onUpdate = () => {}, log = console, dep
       try {
         await bounded(async signal => {
           for (const entry of attempt.entries) {
+            const requestedAt = Date.now();
             const mapping = await attempt.gateway.map(entry.port, attempt.route.address, {
               protocol: entry.protocol, externalPort: entry.externalPort, ttl: attempt.ttl,
               autoRefresh: false, description, signal
             });
             if (mapping.externalPort !== entry.externalPort) throw failure('PORT_CONFLICT');
             if (Number.isFinite(mapping.lifetime) && mapping.lifetime <= 0) throw failure('UNAVAILABLE');
+            entry.externalHost = mapping.externalHost;
+            entry.expiresAt = requestedAt + (Number.isFinite(mapping.lifetime) ? mapping.lifetime : attempt.ttl) * 1000;
             if (Number.isFinite(mapping.lifetime) && mapping.lifetime < attempt.ttl) {
               attempt.ttl = mapping.lifetime;
               shorterLease = true;
@@ -422,7 +438,7 @@ function createPortMapper({ mode = 'on', onUpdate = () => {}, log = console, dep
     });
     return closing;
   }
-  return { openPorts, closePorts, getStatus, getWanAddress };
+  return { openPorts, closePorts, getStatus, getWanAddress, getMappedUdp };
 }
 
 // Function exports also support callers that need a single mapper instance.

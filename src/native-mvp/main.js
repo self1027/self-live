@@ -7,6 +7,7 @@ const { createViewerServer } = require('./server');
 const { createNativeAudit } = require('./audit');
 const { createIceSettings } = require('./ice-config');
 const { readRelayConfig } = require('../main/relay-client');
+const { selectMediaPorts } = require('../main/media-ports');
 app.setName('Self Live Native MVP');
 app.setPath('userData',path.join(app.getPath('appData'),'SelfLive-NativeMVP'));
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -15,7 +16,7 @@ const viewers = new Set();
 const directory = path.join(app.getPath('documents'),'SelfLive-NativeMVP-Logs');
 const audit = createNativeAudit(directory);
 function publish(value) {
-  if (!['sample','receiver-sample','source-resize','viewer-connected','viewer-disconnected','viewer-error','stopped','error','signaling-status','ice-candidates','peer-state'].includes(value.type)) return;
+  if (!['sample','receiver-sample','source-resize','viewer-connected','viewer-disconnected','viewer-error','stopped','error','signaling-status','ice-candidates','peer-state','connection-stage','port-mapping'].includes(value.type)) return;
   if (recording) { try { audit.write(value); } catch { recording = false; } }
   if (['error','stopped'].includes(value.type)) { phase = 'idle'; recording = false; audit.stop(); }
   if (window && !window.isDestroyed()) window.webContents.send('native-mvp-event',value);
@@ -45,7 +46,8 @@ app.whenReady().then(async () => {
   native = new NativeVideo({executable,runtime,registry:path.join(app.getPath('userData'),'gstreamer-registry.bin')});
   native.on('event',value=>{if(!['offer','ice','peer-state'].includes(value.type))publish(value);});
   native.on('exit',() => publish({type:'error',message:'O motor C++ encerrou. Reinicie o MVP.'}));
-  server = await createViewerServer({native,onEvent:publish,relayConfig:readRelayConfig(process.env,'native-mvp'),iceProvider:()=>network.configuration()});
+  const mediaRange=await selectMediaPorts(process.env.SELF_LIVE_MEDIA_PORT===undefined?undefined:Number(process.env.SELF_LIVE_MEDIA_PORT));
+  server = await createViewerServer({native,onEvent:publish,relayConfig:readRelayConfig(process.env,'native-mvp'),iceProvider:()=>network.configuration(),directEnabled:true,mediaRange});
   ipcMain.handle('native-mvp-network',event=>{trusted(event);return network.snapshot();});
   ipcMain.handle('native-mvp-network-save',(event,value)=>{trusted(event);if(phase!=='idle')throw new Error('Pare a captura para alterar a rede.');return network.save(value);});
   ipcMain.handle('native-mvp-sources',event => { trusted(event); return native.request('list'); });
@@ -60,7 +62,7 @@ app.whenReady().then(async () => {
       network.configuration();
       const result = await native.request('start',{window:value.window,fps:value.fps,height:value.height,bitrateKbps:value.bitrateKbps,adapter:value.adapter,gpuPriority:value.gpuPriority});
       recording = value.logging;
-      const log = recording ? audit.start({width:result.width,height:result.height,fps:result.fps,bitrateKbps:value.bitrateKbps,gpuPriorityRequested:value.gpuPriority,encoder:result.encoder,adapter:result.adapter,adapterLuid:result.adapterLuid,capture:result.capture,memory:result.memory,
+      const log = recording ? audit.start({role:'sender',signaling:'automatic',width:result.width,height:result.height,fps:result.fps,bitrateKbps:value.bitrateKbps,gpuPriorityRequested:value.gpuPriority,encoder:result.encoder,adapter:result.adapter,adapterLuid:result.adapterLuid,capture:result.capture,memory:result.memory,
         turnConfigured:network.snapshot().hasCredential,icePolicy:network.snapshot().forceRelay?'relay':'all'}) : null;
       phase = 'streaming'; return {...result,...server.activate(),log};
     } catch (error) { phase = 'idle'; recording = false; await native.request('stop').catch(() => {}); throw error; }
@@ -73,13 +75,28 @@ app.whenReady().then(async () => {
   async function openViewer(url) {
     if (!url) throw new Error('Inicie a captura primeiro.');
     const viewer = new BrowserWindow({width:1100,height:760,title:'Self Live — espectador MVP',backgroundColor:'#10151d',webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,backgroundThrottling:false}});
+    viewer.webContents.setWebRTCUDPPortRange({min:mediaRange.min,max:mediaRange.max});
     viewers.add(viewer); viewer.once('closed',() => {viewers.delete(viewer);server.releaseRemote(url);});
     viewer.webContents.setWindowOpenHandler(() => ({action:'deny'}));
     viewer.webContents.on('will-navigate',(navigation,destination) => { if (destination.split('#')[0] !== url.split('#')[0]) navigation.preventDefault(); });
     await viewer.loadURL(url);
   }
   ipcMain.handle('native-mvp-viewer',event=>{trusted(event);return openViewer(server.info().local);});
-  ipcMain.handle('native-mvp-join',(event,invitation)=>{trusted(event);return openViewer(server.remoteViewer(invitation));});
+  ipcMain.handle('native-mvp-join',async(event,invitation,logging=true)=>{
+    trusted(event);if(typeof logging!=='boolean')throw new Error('Configuracao de logs invalida.');
+    const receiverAudit=logging?createNativeAudit(directory):null;
+    const write=value=>{try{receiverAudit?.write(value);}catch{}};
+    const stop=()=>{try{receiverAudit?.stop();}catch{}};
+    let url;
+    try {
+      receiverAudit?.start({role:'receiver',signaling:'automatic'});
+      url=server.remoteViewer(invitation,{onEvent:write,onClose:stop});
+      await openViewer(url);
+    } catch(error){
+      write({type:'connection-stage',role:'receiver',stage:'failed',code:error.code||'unavailable'});
+      if(url)server.releaseRemote(url);stop();throw error;
+    }
+  });
   ipcMain.handle('native-mvp-copy',(event,index) => {
     trusted(event); const info = server.info(); const links = [info.local,...info.lan,...(info.internet?[info.internet]:[])];
     if (!Number.isInteger(index) || !links[index]) throw new Error('Convite indisponivel.');

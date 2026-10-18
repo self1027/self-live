@@ -1,14 +1,20 @@
 appId: com.selflive.native-mvp
 productName: Self Live Native MVP
-artifactName: Self-Live-Native-MVP-${version}-${arch}-internet-turn.${ext}
+artifactName: Self-Live-Native-MVP-${version}-${arch}-automatic.${ext}
 directories:
-  output: dist/native-mvp-internet-turn
+  output: dist/native-mvp-automatic
 extraMetadata:
   main: src/native-mvp/main.js
 files:
   - src/native-mvp/**/*
   - src/main/relay-client.js
   - src/main/turn.js
+  - src/main/access-link.js
+  - src/main/network.js
+  - src/main/connectivity.js
+  - src/main/portmapper.js
+  - src/main/pcp.js
+  - src/main/media-ports.js
   - src/shared/crypto.js
   - package.json
 extraResources:

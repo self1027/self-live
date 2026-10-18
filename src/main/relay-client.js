@@ -83,7 +83,11 @@ class RelayClient extends EventEmitter {
         } catch { this.emit('warning', 'Mensagem cifrada rejeitada'); }
       } else if (['user_joined', 'user_left'].includes(m.type)) this.emit('presence', m);
     });
-    ws.on('error', () => this.emit('warning', 'Relay indisponível; WSS local continua ativo'));
+    ws.on('error', error => {
+      const code=['ENOTFOUND','EAI_AGAIN'].includes(error.code)?'dns_failed':/CERT|TLS|SSL/.test(error.code||'')?'tls_failed':'relay_unavailable';
+      this.emit('failure',code);
+      this.emit('warning', 'Relay indisponível; WSS local continua ativo');
+    });
     ws.on('close', code => {
       clearTimeout(timer);
       if (this.stopped) { this.update('offline'); this.emit('closed', code); return; }

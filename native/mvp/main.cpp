@@ -191,6 +191,15 @@ class Engine {
   }
   void connect(unsigned generation, JsonObject const& settings) {
     if (!active_) throw std::runtime_error("Inicie a captura antes de conectar o espectador.");
+    const bool udpRange = settings.HasKey(L"udpMin") || settings.HasKey(L"udpMax");
+    int udpMin = 0, udpMax = 0;
+    if (udpRange) {
+      if (!settings.HasKey(L"udpMin") || !settings.HasKey(L"udpMax") ||
+          settings.GetNamedValue(L"udpMin").ValueType() != JsonValueType::Number ||
+          settings.GetNamedValue(L"udpMax").ValueType() != JsonValueType::Number) throw std::runtime_error("Faixa UDP invalida.");
+      udpMin = number(settings, L"udpMin", 0); udpMax = number(settings, L"udpMax", 0);
+      if (udpMin < 1 || udpMax > 65535 || udpMin > udpMax) throw std::runtime_error("Faixa UDP invalida.");
+    }
     stopPeer(); generation_ = generation;
     std::ostringstream description;
     description << "appsrc name=frames is-live=true format=time block=false max-buffers=1 leaky-type=downstream ! "
@@ -206,6 +215,12 @@ class Engine {
     source_ = gst_bin_get_by_name(GST_BIN(pipeline_), "frames");
     encoder_ = gst_bin_get_by_name(GST_BIN(pipeline_), "encoder");
     peer_ = gst_bin_get_by_name(GST_BIN(pipeline_), "peer");
+    if (udpRange) {
+      GstWebRTCICE* ice = nullptr; g_object_get(peer_, "ice-agent", &ice, nullptr);
+      if (!ice) { stopPeer(); throw std::runtime_error("Agente ICE indisponivel para a faixa UDP."); }
+      g_object_set(ice, "min-rtp-port", static_cast<guint>(udpMin), "max-rtp-port", static_cast<guint>(udpMax), nullptr);
+      gst_object_unref(ice);
+    }
     const auto stun=text(settings,L"stunServer");
     const auto servers=settings.GetNamedArray(L"turnServers",JsonArray());
     const bool relayOnly=settings.GetNamedBoolean(L"relayOnly",false);

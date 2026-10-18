@@ -36,7 +36,10 @@ process.on('message',async message => {
     else if(message.type==='network-summary') {
       const folder=path.join(app.getPath('documents'),'SelfLive-NativeMVP-Logs');
       const rows=fs.existsSync(folder)?fs.readdirSync(folder).filter(file=>file.endsWith('.jsonl')).flatMap(file=>fs.readFileSync(path.join(folder,file),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];
-      result={candidates:rows.filter(row=>row.type==='ice-candidates').at(-1)?.counts,mediaPaths:[...new Set(rows.filter(row=>row.type==='receiver-sample').map(row=>row.transport?.mode).filter(Boolean))]};
+      result={candidates:rows.filter(row=>row.type==='ice-candidates').at(-1)?.counts,mediaPaths:[...new Set(rows.filter(row=>row.type==='receiver-sample').map(row=>row.transport?.mode).filter(Boolean))],
+        signalPaths:[...new Set(rows.filter(row=>row.type==='connection-stage'&&row.stage==='connected').map(row=>row.method))],
+        entryFailures:[...new Set(rows.filter(row=>row.type==='connection-stage'&&row.stage==='failed').map(row=>row.code).filter(Boolean))],
+        receiverLogs:rows.filter(row=>row.type==='start'&&row.role==='receiver').length};
     }
     else if (message.type === 'close-viewer') window.close();
     else if (message.type === 'quit') { process.send({id:message.id,ok:true}); app.quit(); return; }

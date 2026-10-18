@@ -23,6 +23,12 @@ function createConnectivity({ servers, endpoints, udpPorts, mode, ttl, onUpdate 
   function publish() { if (!closed) onUpdate(snapshot()); }
   return {
     snapshot,
+    // Private ICE socket metadata stays in this process, separate from snapshots.
+    getMappedUdp() {
+      if (closed || !['public', 'nat'].includes(network.ipv4Status)) return null;
+      const lease = mapper.getMappedUdp();
+      return lease?.externalHost === publicIp ? lease : null;
+    },
     natStatus: () => natReady,
     endpoints: () => buildAccessEndpoints({ endpoints, publicIp, wsPort: servers.wsPort,
       mapping: mapper.getStatus(), networkStatus: network, bindings: servers.bindings }),

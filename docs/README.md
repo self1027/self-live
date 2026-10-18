@@ -10,13 +10,14 @@
 | [Piloto portátil](pilot.md) | Build Windows x64, configuração local e teste em dois PCs. |
 | [Áudio por aplicativo](application-audio.md) | Exclusão do Discord, janelas, requisitos Windows e helper nativo. |
 | [Diagnóstico de transmissão](stream-audit.md) | Logs, adaptive, experimentos e contenção de GPU. |
-| [MVP de captura C++](native-mvp.md) | WGC/D3D11/H.264/WebRTC, convites de internet, STUN/TURN e comparação sob carga. |
+| [MVP de captura C++](native-mvp.md) | WGC/D3D11/H.264/WebRTC, conexão automática, P2P, logs do receptor e comparação sob carga. |
 
 ## Desenvolver e operar
 
 | Guia | Conteúdo |
 | --- | --- |
 | [Desenvolvimento e testes](development.md) | Executar pelo código, loopback, dois/três peers e suites automatizadas. |
+| [Skills de desenvolvimento](development-skills.md) | Origem, revisões e aplicação de Superpowers, Ponytail, UI UX Pro Max e Taste. |
 | [Rede e arquitetura](networking.md) | WSS, convites, IPv6, mapeamento de portas, TURN e shutdown. |
 | [Provisionar relay](relay-setup.md) | HTTPS/WSS, certificados, configuração, monitoramento e manutenção da VPS. |
 | [Provisionar TURN](turn-setup.md) | Coturn, segredo servidor, portas e credenciais temporárias. |

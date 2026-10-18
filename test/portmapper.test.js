@@ -129,6 +129,53 @@ test('lease menor concedido pelo roteador renova antes da expiração real', asy
   await f.mapper.closePorts();
 });
 
+test('private UDP leases retain the routed address and actual expiry without exposing addresses in status', async () => {
+  const f = fixture('pcp', { lifetime: 300 });
+  assert.equal(f.mapper.getMappedUdp(), null);
+  await f.mapper.openPorts({ tcpPort: 4000, udpPort: 5000, udpPorts: [5000, 5001] });
+  const leases = f.mapper.getMappedUdp();
+  assert.equal(leases.internalHost, '192.168.1.50');
+  assert.equal(leases.externalHost, '8.8.8.8');
+  assert.deepEqual(leases.ports.map(entry => [entry.internalPort, entry.externalPort]), [[5000, 5000], [5001, 5001]]);
+  leases.ports[0].externalPort = 1;
+  assert.equal(f.mapper.getMappedUdp().ports[0].externalPort, 5000, 'Callers cannot mutate live leases');
+  assert.doesNotMatch(JSON.stringify(f.mapper.getStatus()), /192\.168|8\.8\.8\.8|expiresAt/);
+  const now = Date.now;
+  try {
+    Date.now = () => now() + 301_000;
+    assert.equal(f.mapper.getMappedUdp(), null, 'A delayed renewal cannot advertise expired leases');
+  } finally { Date.now = now; }
+  await f.intervals[0].callback();
+  assert.ok(f.mapper.getMappedUdp(), 'Successful renewal restores a current lease');
+  await f.mapper.closePorts();
+  assert.equal(f.mapper.getMappedUdp(), null);
+});
+
+test('private UDP expiry includes gateway response time instead of extending the granted lease', async () => {
+  const f = fixture('pcp', { lifetime: 300 });
+  const original = f.gateways.pcp.map, now = Date.now;
+  let clock = 1000;
+  f.gateways.pcp.map = async (...args) => { clock += 2000; return original(...args); };
+  try {
+    Date.now = () => clock;
+    await f.mapper.openPorts({ tcpPort: 4000, udpPort: 5000 });
+    assert.ok(f.mapper.getMappedUdp());
+    clock = 304000;
+    assert.equal(f.mapper.getMappedUdp(), null, 'The UDP request started at 3000 and its 300s lease has expired');
+  } finally { Date.now = now; await f.mapper.closePorts(); }
+});
+
+test('renewal failure withdraws private UDP metadata before slow lease cleanup finishes', async () => {
+  const f = fixture('pcp', { failRenew: true });
+  await f.mapper.openPorts({ tcpPort: 4000, udpPort: 5000 });
+  const cleanup = [];
+  f.gateways.pcp.unmap = () => new Promise(resolve => cleanup.push(resolve));
+  const renewal = f.intervals[0].callback();
+  while (!cleanup.length) await new Promise(resolve => setImmediate(resolve));
+  try { assert.equal(f.mapper.getMappedUdp(), null); }
+  finally { for (const finish of cleanup) finish(); await renewal; await f.mapper.closePorts(); }
+});
+
 test('falha de renovação limpa o estado e não mantém anúncio de portas expiradas', async () => {
   const f = fixture('pcp', { failRenew: true });
   await f.mapper.openPorts({ tcpPort: 4000, udpPort: 5000 });

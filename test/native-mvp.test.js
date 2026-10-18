@@ -68,6 +68,23 @@ test('viewer server refuses cross-origin WebSocket upgrades',async t => {
   client.on('error',()=>{});await new Promise(resolve=>client.once('close',resolve));assert.equal(client.readyState,WebSocket.CLOSED);
 });
 
+test('LAN viewer receiver-state updates do not interrupt answer negotiation',async t=>{
+  const native=new EventEmitter(),requests=[];
+  native.request=async(op,fields)=>{requests.push({op,fields});return {};};
+  const server=await createViewerServer({native,addresses:[],bind:'127.0.0.1'});
+  const info=server.activate(),origin=`http://127.0.0.1:${info.port}`;
+  const client=new WebSocket(`ws://127.0.0.1:${info.port}/signal`,{origin});
+  t.after(async()=>{client.terminate();await server.close();});
+  await once(client,'open');const greeting=once(client,'message');
+  client.send(JSON.stringify({type:'join',token:info.local.split('#')[1]}));await greeting;
+  client.send(JSON.stringify({type:'receiver-state',state:'connecting'}));
+  client.send(JSON.stringify({type:'answer',sdp:'lan-viewer-answer'}));
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(client.readyState,WebSocket.OPEN);
+  assert.ok(requests.some(value=>value.op==='answer'&&value.fields.sdp==='lan-viewer-answer'));
+  assert.ok(!requests.some(value=>value.op==='disconnect'));
+});
+
 test('native diagnostics omit negotiation and reject invalid receiver measurements',()=>{
   assert.deepEqual(cleanViewerSample({decodedFps:NaN,framesDropped:-1,jitterMs:Infinity,token:'private',visible:true}),{type:'receiver-sample',visible:true});
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'native-mvp-audit-'));
@@ -75,4 +92,16 @@ test('native diagnostics omit negotiation and reject invalid receiver measuremen
   audit.write({type:'offer',sdp:'private-sdp'});audit.write({type:'ice',candidate:'private-ip'});audit.write({type:'sample',captureFps:60});audit.stop();
   const records=fs.readdirSync(directory).flatMap(file=>fs.readFileSync(path.join(directory,file),'utf8').trim().split('\n').map(JSON.parse));
   assert.deepEqual(records.map(value=>value.type),['start','sample','end']);assert.ok(!JSON.stringify(records).includes('private'));
+});
+
+test('receiver audit names do not collide with capture audit and connection stages exclude private fields',()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'native-mvp-receiver-audit-'));
+  const capture=createNativeAudit(directory),receiver=createNativeAudit(directory);
+  const first=capture.start({role:'sender'}),second=receiver.start({role:'receiver'});
+  assert.notEqual(first,second);
+  receiver.write({type:'connection-stage',role:'receiver',stage:'trying',method:'relay',code:'relay_registered',token:'private-token',invite:'private-invitation',candidate:'private-address'});
+  receiver.write({type:'port-mapping',status:'mapped',method:'upnp',ip:'private-ip',reason:'private-text'});
+  capture.stop();receiver.stop();
+  const text=fs.readFileSync(second,'utf8');assert.ok(!text.includes('private-'));
+  assert.deepEqual(JSON.parse(text.trim().split('\n')[1]).code,'relay_registered');
 });

@@ -4,7 +4,7 @@ contextBridge.exposeInMainWorld('nativeMvp', {
   start: value => ipcRenderer.invoke('native-mvp-start',value),
   stop: () => ipcRenderer.invoke('native-mvp-stop'),
   openViewer: () => ipcRenderer.invoke('native-mvp-viewer'),
-  join: value => ipcRenderer.invoke('native-mvp-join',value),
+  join: (value,logging=true) => ipcRenderer.invoke('native-mvp-join',value,logging),
   network: () => ipcRenderer.invoke('native-mvp-network'),
   saveNetwork: value => ipcRenderer.invoke('native-mvp-network-save',value),
   copyLink: value => ipcRenderer.invoke('native-mvp-copy',value),

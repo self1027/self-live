@@ -6,7 +6,12 @@ const { networkInterfaces } = require('node:os');
 const { WebSocketServer } = require('ws');
 const { randomUUID } = require('node:crypto');
 const { nativeIceConfiguration, STUN } = require('./ice-config');
-const { createInternetHost, attachInternetViewer, decodeInvitation } = require('./internet');
+const { createInternetHost, createInvitation, decodeInvitation } = require('./internet');
+const { createDirectServer } = require('./direct');
+const { attachAutomaticViewer } = require('./automatic');
+const { buildAccessEndpoints } = require('../main/access-link');
+const { getPreferredEndpoints } = require('../main/network');
+const { createNativeNetwork } = require('./network');
 
 const viewerFields = ['decodedFps','renderedFps','framesDecoded','framesDropped','freezeCount','totalFreezesDuration','receiveKbps','jitterMs','decodeMs','frameWidth','frameHeight','renderGapP95Ms','renderGapMaxMs'];
 function cleanViewerSample(value) {
@@ -20,10 +25,13 @@ function cleanViewerSample(value) {
   return safe;
 }
 async function createViewerServer({ native, onEvent = () => {}, addresses, bind = '0.0.0.0', relayConfig = null,
-  iceProvider = () => ({iceServers:[{urls:STUN}],iceTransportPolicy:'all'}), InternetHost = createInternetHost, InternetViewer = attachInternetViewer }) {
+  iceProvider = () => ({iceServers:[{urls:STUN}],iceTransportPolicy:'all'}), InternetHost = createInternetHost, InternetViewer = attachAutomaticViewer,
+  directEnabled = false, mediaRange, env = process.env }) {
   const ips = addresses || [...new Set(Object.values(networkInterfaces()).flat().filter(row => row?.family === 'IPv4' && !row.internal).map(row => row.address))];
   const hosts = new Set(['127.0.0.1', 'localhost', ...ips]);
   let token = null, viewer = null, generation = 0, active = false, internet = null, candidateCounts = {};
+  let direct, network, invitation;
+  const localIce=new Map(),mappedIce=new Set();
   const remote = new Map(), closingRelays=new Set();
   const retire=operation=>{const promise=Promise.resolve(operation).catch(()=>{});closingRelays.add(promise);promise.finally(()=>closingRelays.delete(promise));};
   const root = path.join(__dirname, 'ui');
@@ -46,6 +54,13 @@ async function createViewerServer({ native, onEvent = () => {}, addresses, bind 
     wss.handleUpgrade(request, socket, head, client => wss.emit('connection', client,isRemote));
   });
   const send = (client, value) => { if (client?.readyState === 1) client.send(JSON.stringify(value)); };
+  const receiverEvent=(entry,event)=>{if(!entry.finished){onEvent(event);entry.onEvent?.(event);}};
+  function advertiseMapped(value){
+    if(!viewer||value.generation!==generation)return;
+    const mapped=network?.mappedIce(value);if(!mapped||mappedIce.has(mapped.candidate))return;
+    mappedIce.add(mapped.candidate);send(viewer,{type:'ice',...mapped});
+    candidateCounts.srflx=(candidateCounts.srflx||0)+1;onEvent({type:'ice-candidates',counts:{...candidateCounts}});
+  }
   function detach(client) {
     if (viewer !== client) return;
     viewer = null; generation++;
@@ -65,13 +80,14 @@ async function createViewerServer({ native, onEvent = () => {}, addresses, bind 
           clearTimeout(entry.expiry);entry.client=client;
           client.once('close',()=>{
             if(entry.client!==client)return;
+            receiverEvent(entry,{type:'connection-stage',role:'receiver',stage:'closed'});
             entry.client=null;entry.closing=Promise.resolve(entry.session?.close()).catch(()=>{});retire(entry.closing);entry.session=null;
-            if(remote.get(value.token)===entry)entry.expiry=setTimeout(()=>remote.delete(value.token),90000);
+            if(remote.get(value.token)===entry)entry.expiry=setTimeout(()=>{remote.delete(value.token);entry.finished=true;entry.onClose?.();},90000);
           });
           await entry.closing;
           if(remote.get(value.token)!==entry||entry.client!==client||client.readyState!==1)return;
-          entry.session=InternetViewer({client,invite:entry.invite});
-        } catch {client.close(1008,'Convite invalido.');}
+          entry.session=InternetViewer({client,invite:entry.invite,onEvent:event=>receiverEvent(entry,event),onSample:value=>receiverEvent(entry,cleanViewerSample(value))});
+        } catch {send(client,{type:'error',code:'invalid_invitation',message:'O convite local do espectador nao esta mais ativo. Abra o convite novamente no MVP.'});client.close(1008,'Convite invalido.');}
       });return;
     }
     let authenticated = false, count = 0, rateSince = Date.now(), lastSample = 0, joinedGeneration, answer;
@@ -89,13 +105,14 @@ async function createViewerServer({ native, onEvent = () => {}, addresses, bind 
           const supplied = typeof value.token === 'string' ? Buffer.from(value.token) : Buffer.alloc(0);
           const expected = Buffer.from(token || '');
           if (value.type !== 'join' || !active || !token || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new Error('Convite invalido ou captura parada.');
-          if (viewer) { send(client,{type:'error',message:'O MVP aceita um espectador por vez.'}); client.close(1008); return; }
+          if (viewer) { send(client,{type:'error',code:'viewer_busy',message:'O MVP aceita um espectador por vez.'}); client.close(1008); return; }
           authenticated = true; clearTimeout(deadline); viewer = client; joinedGeneration = ++generation;
           const [senderIce,receiverIce]=await Promise.all([iceProvider(),iceProvider()]);
           if(viewer!==client||joinedGeneration!==generation||!active)return;
           candidateCounts={host:0,srflx:0,prflx:0,relay:0};
+          localIce.clear();mappedIce.clear();
           send(client,{type:'connecting',...receiverIce}); onEvent({type:'viewer-connected'});
-          await native.request('connect',{generation:joinedGeneration,...nativeIceConfiguration(senderIce)});
+          await native.request('connect',{generation:joinedGeneration,...nativeIceConfiguration(senderIce),...(mediaRange?{udpMin:mediaRange.min,udpMax:mediaRange.max}:{})});
           return;
         }
         if (viewer !== client || joinedGeneration !== generation) return;
@@ -108,11 +125,14 @@ async function createViewerServer({ native, onEvent = () => {}, addresses, bind 
           const key=value.sdpMLineIndex+':'+value.candidate;if(seenIce.has(key))return;
           if(seenIce.size>=64)throw new Error('Limite ICE.');seenIce.add(key);
           await native.request('ice',{generation:joinedGeneration,candidate:value.candidate,sdpMLineIndex:value.sdpMLineIndex});
+        } else if (value.type === 'receiver-state' && ['new','connecting','connected','disconnected','failed','closed'].includes(value.state)) {
+          // Local/LAN players report their media state on the same authenticated socket.
+          return;
         } else if (value.type === 'sample' && Date.now() - lastSample >= 500) {
           lastSample = Date.now(); onEvent(cleanViewerSample(value));
         } else throw new Error('Mensagem invalida.');
       } catch (error) {
-        send(client,{type:'error',message:authenticated ? 'Falha na negociacao do espectador.' : 'Convite invalido ou captura parada.'});
+        send(client,{type:'error',code:authenticated?'negotiation_failed':'authentication',message:authenticated ? 'Falha na negociacao do espectador.' : 'Convite invalido ou captura parada.'});
         client.close(1008); detach(client);
         if (authenticated) onEvent({type:'viewer-error',message:'Falha na negociacao WebRTC.'});
       }
@@ -127,6 +147,7 @@ async function createViewerServer({ native, onEvent = () => {}, addresses, bind 
     if(value.type==='ice'&&value.generation===generation) {
       const type=/\btyp (host|srflx|prflx|relay)\b/.exec(value.candidate||'')?.[1];
       if(type){candidateCounts[type]++;onEvent({type:'ice-candidates',counts:{...candidateCounts}});}
+      if(localIce.size<64)localIce.set(value.candidate,value);advertiseMapped(value);
     }
     if(value.type==='peer-state'&&value.generation===generation) {
       send(viewer,value);onEvent(value);
@@ -139,38 +160,50 @@ async function createViewerServer({ native, onEvent = () => {}, addresses, bind 
   const helperExit = () => nativeEvent({type:'error',message:'O motor C++ encerrou.'});
   native.on('exit',helperExit);
   await new Promise((resolve,reject) => { server.once('error',reject); server.listen(0,bind,resolve); });
+  try {
+    if(directEnabled)direct=await createDirectServer({accept,bind:bind==='127.0.0.1'?bind:undefined});
+    if(direct&&mediaRange){
+      network=createNativeNetwork({servers:direct,udpPorts:mediaRange.ports,env:{...env,SELF_LIVE_UPNP:env.SELF_LIVE_UPNP||'auto'},onUpdate:event=>{
+        onEvent(event);for(const value of localIce.values())advertiseMapped(value);
+      }});
+      void network.start().catch(()=>{});
+    }
+  } catch(error){clearInterval(heartbeat);native.off('event',nativeEvent);native.off('exit',helperExit);wss.close();server.close();await direct?.close();throw error;}
+  const directRoutes=()=>direct?{fingerprint:direct.fingerprint,endpoints:network?network.endpoints():buildAccessEndpoints({endpoints:addresses?ips.map(ip=>({ip,family:'IPv4'})):getPreferredEndpoints(),wsPort:direct.wsPort,bindings:direct.bindings})}:undefined;
   function info() {
     const port = server.address()?.port;
     return { local:token ? `http://127.0.0.1:${port}/viewer#${token}` : null,
-      lan:token ? ips.map(ip => `http://${ip}:${port}/viewer#${token}`) : [], internet:internet?.invitation || null, signaling:internet?.status() || 'disabled', port, active };
+      lan:token ? ips.map(ip => `http://${ip}:${port}/viewer#${token}`) : [], internet:internet?.invitation || invitation?.() || null, signaling:internet?.status() || 'disabled',port,active,
+      network:network?.snapshot() || null };
   }
   function deactivate() {
-    active=false;token=null;if(internet){retire(internet.close());internet=null;}
+    active=false;token=null;invitation=null;localIce.clear();mappedIce.clear();if(internet){retire(internet.close());internet=null;}
     if(viewer){send(viewer,{type:'stopped'});viewer.close(1000);detach(viewer);}
   }
   return {
     info,
     activate() {
       deactivate();active=true;token=randomBytes(24).toString('hex');
-      if(relayConfig)internet=InternetHost({config:relayConfig,token,accept,onStatus:state=>onEvent({type:'signaling-status',state})});
+      if(relayConfig)internet=InternetHost({config:relayConfig,token,accept,direct:directRoutes,onStatus:state=>onEvent({type:'signaling-status',state})});
+      else if(direct)invitation=createInvitation({config:null,token,direct:directRoutes});
       return info();
     },
     deactivate,
-    remoteViewer(invitation) {
+    remoteViewer(invitation,callbacks={}) {
       if(remote.size>=4)throw new Error('Feche um espectador antes de abrir outro.');
-      const invite=decodeInvitation(invitation),id=randomUUID();remote.set(id,{invite});
+      const invite=decodeInvitation(invitation),id=randomUUID();remote.set(id,{invite,onEvent:callbacks.onEvent,onClose:callbacks.onClose});
       return `http://127.0.0.1:${server.address().port}/viewer?remote=1#${id}`;
     },
     releaseRemote(url) {
       const id=new URL(url).hash.slice(1),entry=remote.get(id);if(!entry)return;
-      remote.delete(id);clearTimeout(entry.expiry);if(entry.session)retire(entry.session.close());entry.client?.close(1000);
+      remote.delete(id);clearTimeout(entry.expiry);entry.finished=true;if(entry.session)retire(entry.session.close());entry.client?.close(1000);entry.onClose?.();
     },
     async close() {
       clearInterval(heartbeat); native.off('event',nativeEvent); native.off('exit',helperExit);
       deactivate();
-      for(const entry of remote.values()){clearTimeout(entry.expiry);if(entry.session)retire(entry.session.close());}remote.clear();
+      for(const entry of remote.values()){clearTimeout(entry.expiry);entry.finished=true;if(entry.session)retire(entry.session.close());entry.onClose?.();}remote.clear();
       for (const client of wss.clients) client.terminate();
-      await Promise.all([new Promise(resolve => wss.close(resolve)),new Promise(resolve => server.close(resolve)),...closingRelays]);
+      await Promise.all([new Promise(resolve => wss.close(resolve)),new Promise(resolve => {server.close(resolve);server.closeAllConnections();}),network?.closePorts(),direct?.close(),...closingRelays]);
     }
   };
 }
