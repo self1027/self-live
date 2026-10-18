@@ -1,12 +1,15 @@
 appId: com.selflive.native-mvp
 productName: Self Live Native MVP
-artifactName: Self-Live-Native-MVP-${version}-${arch}.${ext}
+artifactName: Self-Live-Native-MVP-${version}-${arch}-internet.${ext}
 directories:
-  output: dist/native-mvp
+  output: dist/native-mvp-internet
 extraMetadata:
   main: src/native-mvp/main.js
 files:
   - src/native-mvp/**/*
+  - src/main/relay-client.js
+  - src/main/turn.js
+  - src/shared/crypto.js
   - package.json
 extraResources:
   - from: native/bin/native-video.exe

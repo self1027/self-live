@@ -57,6 +57,9 @@ if (resolved.toLowerCase() !== expected.toLowerCase()) throw new Error('Diretori
 for (const entry of fs.readdirSync(output)) fs.rmSync(path.join(output,entry),{recursive:true,force:true});
 for (const plugin of plugins) copy(path.join(root,'lib/gstreamer-1.0',plugin),path.join('lib/gstreamer-1.0',plugin));
 copy(path.join(root,'libexec/gstreamer-1.0/gst-plugin-scanner.exe'),'libexec/gstreamer-1.0/gst-plugin-scanner.exe');
+copy(path.join(root,'lib/gio/modules/gioopenssl.dll'),'lib/gio/modules/gioopenssl.dll');
+fs.mkdirSync(path.join(output,'etc/ssl/certs'),{recursive:true});
+fs.copyFileSync(path.join(root,'etc/ssl/certs/ca-certificates.crt'),path.join(output,'etc/ssl/certs/ca-certificates.crt'));
 for (const dll of imports(path.resolve(__dirname,'../native/bin/native-video.exe'))) {
   const dependency=dependencyPath(dll); if (dependency) copy(dependency,path.join('bin',dll));
 }

@@ -10,7 +10,7 @@
 | [Piloto portátil](pilot.md) | Build Windows x64, configuração local e teste em dois PCs. |
 | [Áudio por aplicativo](application-audio.md) | Exclusão do Discord, janelas, requisitos Windows e helper nativo. |
 | [Diagnóstico de transmissão](stream-audit.md) | Logs, adaptive, experimentos e contenção de GPU. |
-| [MVP de captura C++](native-mvp.md) | Experimento WGC/D3D11/H.264/WebRTC, somente vídeo e um espectador na LAN. |
+| [MVP de captura C++](native-mvp.md) | WGC/D3D11/H.264/WebRTC, convites de internet, STUN/TURN e comparação sob carga. |
 
 ## Desenvolver e operar
 

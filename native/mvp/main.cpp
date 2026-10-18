@@ -5,6 +5,7 @@
 #include "gpu-load.h"
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <winrt/Windows.Data.Json.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/d3d11/gstd3d11.h>
@@ -90,6 +91,17 @@ static void onNegotiation(GstElement*, gpointer data) {
 static void onIce(GstElement*, guint index, gchar* candidate, gpointer data) {
   const auto context = *static_cast<PeerRef*>(data);
   if (context->live) emit("{\"type\":\"ice\",\"generation\":" + std::to_string(context->generation) + ",\"sdpMLineIndex\":" + std::to_string(index) + ",\"candidate\":" + jsonString(candidate) + "}");
+}
+static void onPeerState(GObject* object, GParamSpec*, gpointer data) {
+  const auto context=*static_cast<PeerRef*>(data);
+  if(!context->live)return;
+  gint state=0;g_object_get(object,"connection-state",&state,nullptr);
+  const auto spec=g_object_class_find_property(G_OBJECT_GET_CLASS(object),"connection-state");
+  auto values=static_cast<GEnumClass*>(g_type_class_ref(spec->value_type));
+  const auto value=g_enum_get_value(values,state);
+  const std::string name=value?value->value_nick:"unknown";
+  g_type_class_unref(values);
+  emit("{\"type\":\"peer-state\",\"generation\":"+std::to_string(context->generation)+",\"state\":"+jsonString(name)+"}");
 }
 
 class Engine {
@@ -177,7 +189,7 @@ class Engine {
     peerContext_.reset();
     std::lock_guard lock(timingsMutex_); timings_.clear(); submitLatency_.clear(); encoderLatency_.clear(); gaps_.clear(); previousEncodedTime_ = 0;
   }
-  void connect(unsigned generation) {
+  void connect(unsigned generation, JsonObject const& settings) {
     if (!active_) throw std::runtime_error("Inicie a captura antes de conectar o espectador.");
     stopPeer(); generation_ = generation;
     std::ostringstream description;
@@ -194,6 +206,20 @@ class Engine {
     source_ = gst_bin_get_by_name(GST_BIN(pipeline_), "frames");
     encoder_ = gst_bin_get_by_name(GST_BIN(pipeline_), "encoder");
     peer_ = gst_bin_get_by_name(GST_BIN(pipeline_), "peer");
+    const auto stun=text(settings,L"stunServer");
+    const auto servers=settings.GetNamedArray(L"turnServers",JsonArray());
+    const bool relayOnly=settings.GetNamedBoolean(L"relayOnly",false);
+    if(stun.size()>2048 || (!stun.empty()&&stun.rfind("stun://",0)!=0) || servers.Size()>4 || (relayOnly&&servers.Size()==0)) {
+      stopPeer();throw std::runtime_error("Configuracao ICE invalida.");
+    }
+    if(!stun.empty())g_object_set(peer_,"stun-server",stun.c_str(),nullptr);
+    g_object_set(peer_,"ice-transport-policy",relayOnly?GST_WEBRTC_ICE_TRANSPORT_POLICY_RELAY:GST_WEBRTC_ICE_TRANSPORT_POLICY_ALL,nullptr);
+    for(const auto& value:servers) {
+      const auto uri=to_string(value.GetString());
+      if(uri.size()>8192 || (uri.rfind("turn://",0)!=0&&uri.rfind("turns://",0)!=0)) {stopPeer();throw std::runtime_error("Servidor TURN invalido.");}
+      gboolean accepted=FALSE;g_signal_emit_by_name(peer_,"add-turn-server",uri.c_str(),&accepted);
+      if(!accepted){stopPeer();throw std::runtime_error("O WebRTC nativo recusou a configuracao TURN.");}
+    }
     GstContext* context = gst_context_new(GST_D3D11_DEVICE_HANDLE_CONTEXT_TYPE, TRUE);
     gst_structure_set(gst_context_writable_structure(context), "device", GST_TYPE_D3D11_DEVICE, gstDevice_, nullptr);
     gst_element_set_context(pipeline_, context); gst_context_unref(context);
@@ -216,6 +242,7 @@ class Engine {
     auto cleanup = [](gpointer data, GClosure*) { deletePeerRef(data); };
     g_signal_connect_data(peer_, "on-negotiation-needed", G_CALLBACK(onNegotiation), new PeerRef(peerContext_), cleanup, G_CONNECT_DEFAULT);
     g_signal_connect_data(peer_, "on-ice-candidate", G_CALLBACK(onIce), new PeerRef(peerContext_), cleanup, G_CONNECT_DEFAULT);
+    g_signal_connect_data(peer_, "notify::connection-state", G_CALLBACK(onPeerState), new PeerRef(peerContext_), cleanup, G_CONNECT_DEFAULT);
     for (const auto& item : {std::pair{"sink", enterEncoder}, std::pair{"src", leaveEncoder}}) {
       GstPad* pad = gst_element_get_static_pad(encoder_, item.first); gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, item.second, this, nullptr); gst_object_unref(pad);
     }
@@ -388,7 +415,7 @@ public:
       } else if (op == "connect") {
         const auto generation = number(value, L"generation", 0);
         if (generation <= 0) throw std::runtime_error("Sessao invalida.");
-        connect(static_cast<unsigned>(generation)); response(id);
+        connect(static_cast<unsigned>(generation),value); response(id);
       } else if (op == "answer") {
         if (!peer_ || number(value, L"generation", 0) != static_cast<int>(generation_)) throw std::runtime_error("Sessao expirada.");
         const auto sdp = text(value, L"sdp");

@@ -8,8 +8,8 @@ const assert = require('node:assert/strict');
 const electron = require('electron');
 const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
 const children=[];let sequence=0;
-async function launch() {
-  const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+async function launch(overrides={}) {
+  const env={...process.env,...overrides};delete env.ELECTRON_RUN_AS_NODE;
   const child=spawn(electron,[path.join(__dirname,'native-mvp-smoke-peer.js')],{env,windowsHide:true,stdio:['ignore','pipe','pipe','ipc']});children.push(child);
   const pending=new Map();let readyResolve,readyReject;
   const ready=new Promise((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});
@@ -30,7 +30,7 @@ async function waitFor(peer,expression,target='host',timeout=25000){
   const state=await peer.rpc('evaluate',`['status','details','source-state'].map(id=>document.getElementById(id).textContent).join(' | ')`,'host');throw new Error(`Estado nao alcancado: ${expression}\n${state}`);
 }
 const click=(peer,id)=>peer.rpc('evaluate',`document.getElementById(${JSON.stringify(id)}).click()`);
-(async()=>{
+async function run(){
   const fixture=spawn(path.resolve(__dirname,'../native/bin/native-mvp-test-window.exe'),[],{windowsHide:true,stdio:['pipe','pipe','pipe']});children.push(fixture);
   const lines=createInterface({input:fixture.stdout});
   const info=JSON.parse((await once(lines,'line'))[0]);
@@ -73,4 +73,7 @@ const click=(peer,id)=>peer.rpc('evaluate',`document.getElementById(${JSON.strin
   console.log('WGC real -> D3D11 -> hardware H264 -> WebRTC -> decoded video: OK');
   console.log('Client crop, minimize/restore, resize, reconnect, native GPU priority, source close and helper shutdown: OK');
   console.log('Screenshots:',output);
-})().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{for(const child of children){if(child.exitCode===null)child.kill();}});
+}
+async function cleanup(){for(const child of children){if(child.exitCode===null)child.kill();}}
+if(require.main===module)run().catch(error=>{console.error(error);process.exitCode=1;}).finally(cleanup);
+module.exports={launch,waitFor,click,children,cleanup,delay};

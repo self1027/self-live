@@ -7,7 +7,8 @@ function createNativeAudit(directory, maxBytes = 10 * 1024 * 1024) {
     start(config) { file = null; bytes = 0; this.write({type:'start',schema:1,...config}); return file; },
     write(value) {
       // SDP/ICE, source lists/titles/handles and invitation tokens never enter logs.
-      if (!['start','ready','sample','receiver-sample','viewer-connected','viewer-disconnected','viewer-error','source-resize','stopped','error','end'].includes(value.type)) return;
+      if (!['start','ready','sample','receiver-sample','viewer-connected','viewer-disconnected','viewer-error','source-resize','stopped','error','end','signaling-status','ice-candidates','peer-state'].includes(value.type)) return;
+      if(value.type==='error')value={...value,message:String(value.message||'').replace(/(turns?:\/\/)[^\s]*@/gi,'$1[credenciais]@')};
       const line = JSON.stringify({time:new Date().toISOString(),...value}) + '\n';
       if (Buffer.byteLength(line) > 16384) return;
       fs.mkdirSync(directory,{recursive:true});

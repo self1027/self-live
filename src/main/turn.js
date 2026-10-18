@@ -68,4 +68,4 @@ function generateTurnCredentials(config, nodeId, { now = Date.now } = {}) {
   return { username, credential, urls: config.urls };
 }
 
-module.exports = { readTurnConfig, generateTurnCredentials };
+module.exports = { readTurnConfig, generateTurnCredentials, parseTurnUrl };

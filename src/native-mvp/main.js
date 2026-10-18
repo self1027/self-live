@@ -1,10 +1,12 @@
-const { app, BrowserWindow, ipcMain, clipboard, shell, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, Menu, dialog, safeStorage } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
 const { NativeVideo } = require('./controller');
 const { createViewerServer } = require('./server');
 const { createNativeAudit } = require('./audit');
+const { createIceSettings } = require('./ice-config');
+const { readRelayConfig } = require('../main/relay-client');
 app.setName('Self Live Native MVP');
 app.setPath('userData',path.join(app.getPath('appData'),'SelfLive-NativeMVP'));
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -13,7 +15,7 @@ const viewers = new Set();
 const directory = path.join(app.getPath('documents'),'SelfLive-NativeMVP-Logs');
 const audit = createNativeAudit(directory);
 function publish(value) {
-  if (!['sample','receiver-sample','source-resize','viewer-connected','viewer-disconnected','viewer-error','stopped','error'].includes(value.type)) return;
+  if (!['sample','receiver-sample','source-resize','viewer-connected','viewer-disconnected','viewer-error','stopped','error','signaling-status','ice-candidates','peer-state'].includes(value.type)) return;
   if (recording) { try { audit.write(value); } catch { recording = false; } }
   if (['error','stopped'].includes(value.type)) { phase = 'idle'; recording = false; audit.stop(); }
   if (window && !window.isDestroyed()) window.webContents.send('native-mvp-event',value);
@@ -39,9 +41,12 @@ app.whenReady().then(async () => {
   if (!fs.existsSync(executable) || !fs.existsSync(path.join(runtime,'bin/gstreamer-1.0-0.dll')))
     throw new Error('Compile o MVP e prepare o SDK: npm run setup:native-mvp e npm run build:native-mvp.');
   native = new NativeVideo({executable,runtime,registry:path.join(app.getPath('userData'),'gstreamer-registry.bin')});
-  native.on('event',publish);
+  native.on('event',value=>{if(!['offer','ice','peer-state'].includes(value.type))publish(value);});
   native.on('exit',() => publish({type:'error',message:'O motor C++ encerrou. Reinicie o MVP.'}));
-  server = await createViewerServer({native,onEvent:publish});
+  const network=createIceSettings({directory:app.getPath('userData'),storage:safeStorage});
+  server = await createViewerServer({native,onEvent:publish,relayConfig:readRelayConfig(process.env,'native-mvp'),iceProvider:()=>network.configuration()});
+  ipcMain.handle('native-mvp-network',event=>{trusted(event);return network.snapshot();});
+  ipcMain.handle('native-mvp-network-save',(event,value)=>{trusted(event);if(phase!=='idle')throw new Error('Pare a captura para alterar a rede.');return network.save(value);});
   ipcMain.handle('native-mvp-sources',event => { trusted(event); return native.request('list'); });
   ipcMain.handle('native-mvp-start',async (event,value) => {
     trusted(event);
@@ -51,9 +56,11 @@ app.whenReady().then(async () => {
       !Number.isInteger(value.adapter) || value.adapter < -1 || value.adapter > 16 || typeof value.gpuPriority !== 'boolean' || typeof value.logging !== 'boolean') throw new Error('Configuracao invalida.');
     phase = 'starting';
     try {
+      network.configuration();
       const result = await native.request('start',{window:value.window,fps:value.fps,height:value.height,bitrateKbps:value.bitrateKbps,adapter:value.adapter,gpuPriority:value.gpuPriority});
       recording = value.logging;
-      const log = recording ? audit.start({width:result.width,height:result.height,fps:result.fps,bitrateKbps:value.bitrateKbps,gpuPriorityRequested:value.gpuPriority,encoder:result.encoder,adapter:result.adapter,adapterLuid:result.adapterLuid,capture:result.capture,memory:result.memory}) : null;
+      const log = recording ? audit.start({width:result.width,height:result.height,fps:result.fps,bitrateKbps:value.bitrateKbps,gpuPriorityRequested:value.gpuPriority,encoder:result.encoder,adapter:result.adapter,adapterLuid:result.adapterLuid,capture:result.capture,memory:result.memory,
+        turnConfigured:network.snapshot().hasCredential,icePolicy:network.snapshot().forceRelay?'relay':'all'}) : null;
       phase = 'streaming'; return {...result,...server.activate(),log};
     } catch (error) { phase = 'idle'; recording = false; await native.request('stop').catch(() => {}); throw error; }
   });
@@ -62,17 +69,18 @@ app.whenReady().then(async () => {
     phase = 'stopping'; server.deactivate();
     try { await native.request('stop'); } finally { phase = 'idle'; recording = false; audit.stop(); }
   });
-  ipcMain.handle('native-mvp-viewer',async event => {
-    trusted(event); const url = server.info().local;
+  async function openViewer(url) {
     if (!url) throw new Error('Inicie a captura primeiro.');
     const viewer = new BrowserWindow({width:1100,height:760,title:'Self Live — espectador MVP',backgroundColor:'#10151d',webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,backgroundThrottling:false}});
-    viewers.add(viewer); viewer.once('closed',() => viewers.delete(viewer));
+    viewers.add(viewer); viewer.once('closed',() => {viewers.delete(viewer);server.releaseRemote(url);});
     viewer.webContents.setWindowOpenHandler(() => ({action:'deny'}));
-    viewer.webContents.on('will-navigate',(navigation,url) => { if (!url.startsWith(server.info().local?.split('#')[0] || 'about:blank')) navigation.preventDefault(); });
+    viewer.webContents.on('will-navigate',(navigation,destination) => { if (destination.split('#')[0] !== url.split('#')[0]) navigation.preventDefault(); });
     await viewer.loadURL(url);
-  });
+  }
+  ipcMain.handle('native-mvp-viewer',event=>{trusted(event);return openViewer(server.info().local);});
+  ipcMain.handle('native-mvp-join',(event,invitation)=>{trusted(event);return openViewer(server.remoteViewer(invitation));});
   ipcMain.handle('native-mvp-copy',(event,index) => {
-    trusted(event); const info = server.info(); const links = [info.local,...info.lan];
+    trusted(event); const info = server.info(); const links = [info.local,...info.lan,...(info.internet?[info.internet]:[])];
     if (!Number.isInteger(index) || !links[index]) throw new Error('Convite indisponivel.');
     clipboard.writeText(links[index]);
   });

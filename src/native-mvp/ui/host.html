@@ -3,6 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'"><title>Self Live — captura C++</title><link rel="stylesheet" href="style.css"></head>
 <body><main class="host">
   <header><span class="badge">MVP · WINDOWS</span><h1>Teste de captura C++</h1><p>Compartilhe uma janela e compare a fluidez com o jogo sob carga de GPU.</p></header>
+  <section class="card"><h2>Assistir a outro PC</h2><div class="row"><input id="invitation" type="text" aria-label="Convite de internet" placeholder="Cole o convite de internet recebido" autocomplete="off" spellcheck="false"><button id="join">Assistir</button></div><p id="join-status" class="note">Para assistir de outra rede, abra este MVP nos dois PCs.</p></section>
   <section class="card"><div class="row"><h2>O que transmitir</h2><button id="refresh" class="secondary">Atualizar janelas</button></div>
     <label for="source">Janela</label><select id="source"><option>Carregando motor nativo…</option></select>
     <div class="grid"><div><label for="adapter">GPU</label><select id="adapter"><option value="-1">Automática — maior memória dedicada</option></select></div>
@@ -12,11 +13,16 @@
     </div>
     <div class="checks"><label><input type="checkbox" id="priority"> usar prioridade de gpu</label><label><input type="checkbox" id="logging" checked> Gravar logs do teste</label></div>
     <div class="actions"><button id="start" disabled>Iniciar captura</button><button id="stop" class="secondary" disabled>Parar</button><button id="logs" class="secondary">Abrir logs</button></div>
-    <p class="note">Somente vídeo · um espectador · rede local IPv4. Para comparar sob carga, prefira assistir em outro PC.</p>
+    <p class="note">Somente vídeo · um espectador · P2P pela internet ou rede local.</p>
+    <details id="network-options"><summary>Conectividade e TURN</summary><p class="note">STUN já está ativo. Configure TURN se a conexão direta falhar. Use usuário e credencial TURN; o segredo principal da VPS permanece no servidor.</p>
+      <label for="turn-url">Servidor TURN</label><input id="turn-url" type="text" placeholder="turn:servidor:3478?transport=udp" autocomplete="off" spellcheck="false">
+      <div class="grid"><div><label for="turn-user">Usuário</label><input id="turn-user" type="text" autocomplete="off" spellcheck="false"></div><div><label for="turn-password">Credencial</label><input id="turn-password" type="password" autocomplete="new-password"></div></div>
+      <label class="checks"><input id="force-relay" type="checkbox"> Forçar TURN para testar</label><div class="actions"><button id="save-network" class="secondary">Salvar rede</button><button id="clear-turn" class="secondary">Limpar TURN</button></div><p id="turn-status" class="note"></p>
+    </details>
   </section>
   <section class="card"><div class="row"><h2>Espectador</h2><button id="viewer" class="secondary" disabled>Abrir neste PC</button></div>
     <div class="row"><select id="links" aria-label="Endereço do espectador" disabled><option>Inicie a captura para gerar o convite</option></select><button id="copy" disabled>Copiar link</button></div>
-    <p class="note">Abra o link no Chrome ou Edge do outro PC na mesma rede. O convite muda a cada nova captura.</p>
+    <p class="note">Internet: cole o convite no MVP do outro PC. Rede local: abra o link no Chrome ou Edge. O convite muda a cada captura.</p><p id="network-state" class="note"></p><p id="network-path" class="note"></p>
   </section>
   <section class="card"><h2 id="status" role="status">Preparando o motor C++…</h2><p id="details" class="note">Captura WGC e codificação H.264 por hardware.</p>
     <div class="metrics"><div><strong id="captured">—</strong><span>captura fps</span></div><div><strong id="encoded">—</strong><span>encoder fps</span></div><div><strong id="received">—</strong><span>recebidos fps</span></div><div><strong id="latency">—</strong><span>até encoder p95</span></div></div>

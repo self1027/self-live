@@ -34,7 +34,9 @@
     "setup:native-mvp": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-native-mvp.ps1",
     "build:native-mvp": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-native-mvp.ps1",
     "start:native-mvp": "electron src/native-mvp/main.js",
-    "test:native-mvp": "node --test test/native-mvp.test.js && node scripts/run-native-mvp-smoke.js",
+    "test:native-mvp": "node --test test/native-mvp.test.js test/native-internet.test.js && node scripts/run-native-mvp-smoke.js",
+    "test:native-internet": "node --test test/native-internet.test.js && node scripts/run-native-internet-smoke.js",
+    "test:native-internet:public": "node scripts/run-native-internet-smoke.js --public",
     "dist:native-mvp": "npm run build:native-mvp && node scripts/stage-native-mvp.js && electron-builder --config electron-builder.native-mvp.yml --win portable --x64"
   },
   "dependencies": {

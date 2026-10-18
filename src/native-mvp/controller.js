@@ -13,6 +13,7 @@ class NativeVideo extends EventEmitter {
     const env = { ...process.env, PATH: path.join(runtime, 'bin') + path.delimiter + process.env.PATH,
       GST_PLUGIN_PATH: path.join(runtime, 'lib/gstreamer-1.0'), GST_PLUGIN_SYSTEM_PATH_1_0: '',
       GST_PLUGIN_SCANNER: path.join(runtime, 'libexec/gstreamer-1.0/gst-plugin-scanner.exe'), GST_REGISTRY: registry,
+      GIO_EXTRA_MODULES:path.join(runtime,'lib/gio/modules'),SSL_CERT_FILE:path.join(runtime,'etc/ssl/certs/ca-certificates.crt'),
       GST_DEBUG: process.env.SELF_LIVE_NATIVE_GST_DEBUG || '1', GST_DEBUG_NO_COLOR: '1' };
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve; this.rejectReady = reject;
